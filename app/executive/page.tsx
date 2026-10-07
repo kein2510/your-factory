@@ -1,0 +1,7050 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import {
+  ShieldCheck,
+  Lock,
+  Users,
+  UserPlus,
+  Key,
+  Trash2,
+  Edit,
+  Edit2,
+  Save,
+  Plus,
+  Sparkles,
+  Utensils,
+  History,
+  Image as ImageIcon,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  ArrowRight,
+  Coins,
+  Award,
+  TrendingUp,
+  Calculator,
+  FileText,
+  Check,
+  Calendar,
+  CheckCheck,
+  RefreshCw,
+  Tag,
+  Palette,
+  Store,
+  Landmark,
+  Radio,
+  Clock,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
+  Sliders,
+  Boxes,
+  RotateCcw,
+  BarChart3,
+  Package,
+  Folder,
+  FolderPlus,
+  Gamepad2,
+} from "lucide-react";
+import Link from "next/link";
+import { useApp } from "@/context/AppContext";
+import { formatCurrency } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
+import ImageUploader from "@/components/ImageUploader";
+import { getThemeStyles } from "@/lib/theme";
+import {
+  RecipeRequirement,
+  CustomRole,
+  Item,
+  StaffWeeklyStat,
+  ShopId,
+  ShopDefinition,
+  StaffUser,
+  ItemCategory,
+} from "@/types";
+import { getRecentWeeks, isDateInWeek } from "@/lib/dateUtils";
+
+export default function ExecutivePage() {
+  const {
+    currentUser,
+    users,
+    addUser,
+    updateUserPass,
+    updateUserGameId,
+    updateUsersOrder,
+    deleteUser,
+    storeSettings,
+    updateStoreSettings,
+    shops,
+    addShop,
+    updateShop,
+    deleteShop,
+    siteBranding,
+    updateSiteBranding,
+    roles,
+    addRole,
+    updateRole,
+    deleteRole,
+    updateUserCustomRole,
+    getWeeklySummary,
+    saveWeeklyBonus,
+    finalizeWeeklyBonus,
+    unfinalizeWeeklyBonus,
+    toggleBonusPaid,
+    markAllPastBonusesAsPaid,
+    sales,
+    items,
+    products,
+    ingredients,
+    updatePrice,
+    updateRecipe,
+    addItem,
+    updateItem,
+    deleteItem,
+    updateItemImage,
+    actionLogs,
+    vaultBalance,
+    updateVaultBalance,
+    refreshData,
+    categories,
+    addCategory,
+    updateCategory,
+    deleteCategory,
+  } = useApp();
+
+  const theme = getThemeStyles(siteBranding.themeColor);
+
+  type ExecutiveTab =
+    | "summary"
+    | "statistics"
+    | "users"
+    | "roles"
+    | "bonus"
+    | "recipes"
+    | "items"
+    | "logs"
+    | "settings";
+
+  const [activeTab, setActiveTab] = useState<ExecutiveTab>("summary");
+  const [realtimeNotice, setRealtimeNotice] = useState<string | null>(null);
+
+  // カテゴリー管理ステート
+  const [isAddCatModalOpen, setIsAddCatModalOpen] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatOrder, setNewCatOrder] = useState<number>(5);
+  const [newCatColor, setNewCatColor] = useState<string>("amber");
+  const [newCatIcon, setNewCatIcon] = useState<string>("🍱");
+  const [editingCatId, setEditingCatId] = useState<string | null>(null);
+  const [editCatName, setEditCatName] = useState("");
+  const [editCatOrder, setEditCatOrder] = useState<number>(1);
+  const [editCatColor, setEditCatColor] = useState<string>("amber");
+  const [editCatIcon, setEditCatIcon] = useState<string>("🍱");
+
+  // 幹部ページの Supabase Realtime サブスクリプション
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase
+      .channel("executive_page_realtime_feed")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "factory_system_state" },
+        (payload) => {
+          refreshData();
+          if (payload.eventType === "UPDATE") {
+            setRealtimeNotice("幹部設定（役職・工場設定など）がクラウド同期されました！");
+          }
+          setTimeout(() => setRealtimeNotice(null), 3500);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "factory_action_logs" },
+        () => {
+          refreshData();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "factory_sales" },
+        () => {
+          refreshData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [refreshData]);
+
+  // --- 従業員管理 state ---
+  const [newUsername, setNewUsername] = useState("");
+  const [newDisplayName, setNewDisplayName] = useState("");
+  const [newGameId, setNewGameId] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [newUserRoleId, setNewUserRoleId] = useState<string>(roles[0]?.id || "role-staff");
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editPassInput, setEditPassInput] = useState("");
+  const [showPassMap, setShowPassMap] = useState<{ [userId: string]: boolean }>({});
+  const [editingGameIdUserId, setEditingGameIdUserId] = useState<string | null>(null);
+  const [editGameIdInput, setEditGameIdInput] = useState("");
+
+  // --- 役職（ロール）管理 state ---
+  const [newRoleName, setNewRoleName] = useState("");
+  const [newRoleColor, setNewRoleColor] = useState("amber");
+  const [newRoleIsExec, setNewRoleIsExec] = useState(false);
+  const [newRoleBaseAllowance, setNewRoleBaseAllowance] = useState<number>(20000);
+  const [newRoleDesc, setNewRoleDesc] = useState("");
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [editRoleName, setEditRoleName] = useState("");
+  const [editRoleColor, setEditRoleColor] = useState("amber");
+  const [editRoleIsExec, setEditRoleIsExec] = useState(false);
+  const [editRoleBaseAllowance, setEditRoleBaseAllowance] = useState<number>(20000);
+  const [editRoleDesc, setEditRoleDesc] = useState("");
+
+  // --- 週次（日曜始まり土曜締め）ボーナス査定 & 支給管理 state ---
+  const [bonusSubTab, setBonusSubTab] = useState<"assessment" | "payout" | "settings">("assessment");
+  const [showBonusHelp, setShowBonusHelp] = useState<boolean>(true);
+  const availableWeeks = getRecentWeeks(8);
+  // デフォルトは今週（集計中・即座に確認可能）、または先週
+  const [selectedWeekKey, setSelectedWeekKey] = useState<string>(
+    availableWeeks[0]?.weekKey || ""
+  );
+  // 週ごとの入力値を安全に管理するためのキー `${weekKey}_${userId}`
+  const [weeklyBonusInputs, setWeeklyBonusInputs] = useState<{ [compositeKey: string]: number }>({});
+  const [weeklyBonusNotes, setWeeklyBonusNotes] = useState<{ [compositeKey: string]: string }>({});
+  const [storeRemainingBonusRate, setStoreRemainingBonusRate] = useState<number>(() => storeSettings.storeRemainingBonusRate ?? 10); // 店舗手元純残りからのボーナス還元率 10%
+  const [craftRewardRate, setCraftRewardRate] = useState<number>(() => storeSettings.craftRewardRate ?? 100);                 // クラフト仕込み手当 100円/個
+  const [ingredientRewardRate, setIngredientRewardRate] = useState<number>(() => storeSettings.ingredientRewardRate ?? 50);   // 素材調達手当 50円/個
+  const [baseAllowance, setBaseAllowance] = useState<number>(5000);                   // 基本手当 5,000円
+  const storeRate = storeSettings.storeRemainingRate ?? 70;                           // 店舗手元純残りの割合 (%)
+  const staffIncentiveRate = 100 - storeRate;                                         // スタッフ手渡しインセンティブ割合 (%)
+  const [employeeSortMode, setEmployeeSortMode] = useState<"custom" | "role" | "name" | "date">("custom");
+  const [expandedSalesUserId, setExpandedSalesUserId] = useState<string | null>(null);
+  const [saveSuccessMap, setSaveSuccessMap] = useState<{ [userId: string]: boolean }>({});
+
+  // --- レシピ編集 state ---
+  const [editingRecipeProductId, setEditingRecipeProductId] = useState<string | null>(null);
+  const [tempRecipe, setTempRecipe] = useState<RecipeRequirement[]>([]);
+  const [selectedIngredientId, setSelectedIngredientId] = useState<string>("");
+  const [ingredientQuantity, setIngredientQuantity] = useState<number>(1);
+  const [tempPrices, setTempPrices] = useState<{ [itemId: string]: number }>({});
+
+  // --- アイテム 新規登録 state ---
+  const [itemType, setItemType] = useState<"product" | "ingredient">("product");
+  const [itemShopId, setItemShopId] = useState<ShopId>("factory");
+  const [itemName, setItemName] = useState("");
+  const [itemCategory, setItemCategory] = useState("車両整備・修理");
+  const [itemPrice, setItemPrice] = useState<number>(1000);
+  const [itemInitialStock, setItemInitialStock] = useState<number>(20);
+  const [itemUnit, setItemUnit] = useState("個");
+  const [itemImageUrl, setItemImageUrl] = useState("");
+  const [changingImageItemId, setChangingImageItemId] = useState<string | null>(null);
+
+  // --- アイテム 変更（編集） state ---
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editItemShopId, setEditItemShopId] = useState<ShopId>("factory");
+  const [editItemName, setEditItemName] = useState("");
+  const [editItemType, setEditItemType] = useState<"product" | "ingredient">("product");
+  const [editItemCategory, setEditItemCategory] = useState("");
+  const [editItemPrice, setEditItemPrice] = useState<number>(1000);
+  const [editItemStock, setEditItemStock] = useState<number>(20);
+  const [editItemUnit, setEditItemUnit] = useState("個");
+  const [editItemImageUrl, setEditItemImageUrl] = useState("");
+
+  // --- 絞り込みフィルター state ---
+  const [recipeShopFilter, setRecipeShopFilter] = useState<string>("all");
+  const [itemShopFilter, setItemShopFilter] = useState<string>("all");
+  const [logFilter, setLogFilter] = useState<string>("all");
+
+  // --- 詳細統計・アナリティクス state ---
+  const [statsPeriod, setStatsPeriod] = useState<string>("all"); // "all", "current", "last", or weekKey
+  const [statsView, setStatsView] = useState<"all" | "staff" | "products" | "ingredients" | "stores">("all");
+  const [statsStaffSort, setStatsStaffSort] = useState<"sales" | "craft" | "ingredient" | "count" | "remaining">("sales");
+  const [statsProductShopFilter, setStatsProductShopFilter] = useState<"all" | "sakura" | "buon_viaggio">("all");
+  const [statsProductSort, setStatsProductSort] = useState<"sales" | "count" | "craft" | "stock">("sales");
+  const [statsIngredientSort, setStatsIngredientSort] = useState<"procured" | "stock" | "name">("procured");
+
+  // --- サイト屋号 & ブランド設定 state ---
+  const [brandSiteName, setBrandSiteName] = useState(siteBranding.siteName);
+  const [brandSiteSubtitle, setBrandSiteSubtitle] = useState(siteBranding.siteSubtitle);
+  const [brandLogoUrl, setBrandLogoUrl] = useState(siteBranding.logoUrl);
+  const [brandThemeColor, setBrandThemeColor] = useState(siteBranding.themeColor);
+  const [brandSavedNotice, setBrandSavedNotice] = useState(false);
+  const [prevBranding, setPrevBranding] = useState(siteBranding);
+
+  if (siteBranding !== prevBranding) {
+    setPrevBranding(siteBranding);
+    setBrandSiteName(siteBranding.siteName);
+    setBrandSiteSubtitle(siteBranding.siteSubtitle);
+    setBrandLogoUrl(siteBranding.logoUrl);
+    setBrandThemeColor(siteBranding.themeColor);
+  }
+
+  // --- 店舗（ショップ）追加・編集 state ---
+  const [isAddShopModalOpen, setIsAddShopModalOpen] = useState(false);
+  const [newShopName, setNewShopName] = useState("");
+  const [newShopShortName, setNewShopShortName] = useState("");
+  const [newShopIcon, setNewShopIcon] = useState("🏪");
+  const [newShopThemeColor, setNewShopThemeColor] = useState("amber");
+  const [newShopDesc, setNewShopDesc] = useState("");
+
+  const [editingShopId, setEditingShopId] = useState<string | null>(null);
+  const [editShopName, setEditShopName] = useState("");
+  const [editShopShortName, setEditShopShortName] = useState("");
+  const [editShopIcon, setEditShopIcon] = useState("🏪");
+  const [editShopThemeColor, setEditShopThemeColor] = useState("amber");
+  const [editShopDesc, setEditShopDesc] = useState("");
+
+  // --- ゲーム内金庫調整 state ---
+  const [isVaultModalOpen, setIsVaultModalOpen] = useState(false);
+  const [vaultInput, setVaultInput] = useState<number>(vaultBalance);
+  const [vaultReason, setVaultReason] = useState<string>("ゲーム内金庫と同期調整");
+
+  const handleOpenVaultModal = () => {
+    setVaultInput(vaultBalance);
+    setVaultReason("ゲーム内金庫と同期調整");
+    setIsVaultModalOpen(true);
+  };
+
+  const handleSaveVaultBalance = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateVaultBalance(vaultInput, vaultReason);
+    setIsVaultModalOpen(false);
+  };
+
+  // 幹部ガードチェック
+  if (!currentUser || currentUser.role !== "executive") {
+    return (
+      <div className="max-w-xl mx-auto my-12 bg-stone-900/90 rounded-3xl border border-rose-900/50 shadow-2xl p-8 text-center backdrop-blur-sm">
+        <div className="w-16 h-16 rounded-2xl bg-rose-950/60 text-rose-400 flex items-center justify-center mx-auto mb-4 border border-rose-800/40">
+          <Lock className="w-8 h-8" />
+        </div>
+        <span className="text-xs px-2.5 py-0.5 rounded-full bg-rose-950/80 text-rose-300 font-bold border border-rose-800/50 uppercase tracking-wider">
+          幹部専用アクセス制限
+        </span>
+        <h1 className="text-2xl font-black text-white mt-3 mb-2">
+          幹部権限が必要です
+        </h1>
+        <p className="text-xs text-stone-300 max-w-md mx-auto leading-relaxed">
+          従業員追加やPASS設定、販売価格・レシピの変更、全操作ログの閲覧は
+          「幹部（executive）」権限を持つユーザーのみが行えます。
+          （初期管理者: 名前 <strong className="text-amber-300">kein</strong> / PASS <strong className="text-amber-300">001</strong>）
+        </p>
+
+        <div className="mt-6 pt-6 border-t border-stone-800 flex items-center justify-center gap-3">
+          <Link
+            href="/"
+            className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-all shadow-md cursor-pointer"
+          >
+            メイン画面に戻る
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // 役職バッジスタイルヘルパー
+  const getRoleBadgeClass = (color?: string, isExec?: boolean) => {
+    switch (color) {
+      case "amber":
+        return "bg-amber-100 text-amber-900 border-amber-300";
+      case "rose":
+        return "bg-rose-100 text-rose-900 border-rose-300";
+      case "emerald":
+        return "bg-emerald-100 text-emerald-900 border-emerald-300";
+      case "blue":
+        return "bg-blue-100 text-blue-900 border-blue-300";
+      case "purple":
+        return "bg-purple-100 text-purple-900 border-purple-300";
+      case "stone":
+      default:
+        return isExec
+          ? "bg-amber-100 text-amber-900 border-amber-300"
+          : "bg-stone-100 text-stone-700 border-stone-200";
+    }
+  };
+
+  // 1. 従業員登録ハンドラ
+  const handleAddUser = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUsername.trim() || !newPass.trim()) {
+      alert("名前とPASSを入力してください。");
+      return;
+    }
+    // 既存重複チェック
+    if (users.some((u) => u.username.toLowerCase() === newUsername.trim().toLowerCase())) {
+      alert("同じログイン名の従業員が既に存在します。別の名前にしてください。");
+      return;
+    }
+
+    const selectedRole = roles.find((r) => r.id === newUserRoleId) || roles[0];
+
+    addUser({
+      username: newUsername.trim(),
+      displayName: newDisplayName.trim() || newUsername.trim(),
+      gameId: newGameId.trim() || undefined,
+      pass: newPass.trim(),
+      role: selectedRole.isExecutive ? "executive" : "staff",
+      roleId: selectedRole.id,
+      roleName: selectedRole.name,
+    });
+
+    setNewUsername("");
+    setNewDisplayName("");
+    setNewGameId("");
+    setNewPass("");
+    alert(`従業員「${newDisplayName.trim() || newUsername.trim()}」を追加しました！`);
+  };
+
+  // 役職（ロール）追加ハンドラ
+  const handleCreateRole = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRoleName.trim()) {
+      alert("役職名を入力してください。");
+      return;
+    }
+    addRole({
+      name: newRoleName.trim(),
+      color: newRoleColor,
+      isExecutive: newRoleIsExec,
+      baseAllowance: Math.max(0, newRoleBaseAllowance),
+      description: newRoleDesc.trim(),
+    });
+    setNewRoleName("");
+    setNewRoleDesc("");
+    setNewRoleIsExec(false);
+    setNewRoleBaseAllowance(20000);
+    alert(`新しい役職「${newRoleName.trim()}」を作成しました！`);
+  };
+
+  // 役職編集開始
+  const handleStartEditRole = (role: CustomRole) => {
+    setEditingRoleId(role.id);
+    setEditRoleName(role.name);
+    setEditRoleColor(role.color);
+    setEditRoleIsExec(role.isExecutive);
+    setEditRoleBaseAllowance(role.baseAllowance ?? 20000);
+    setEditRoleDesc(role.description || "");
+  };
+
+  // 役職編集保存
+  const handleSaveRoleEdit = (roleId: string) => {
+    if (!editRoleName.trim()) {
+      alert("役職名を入力してください。");
+      return;
+    }
+    updateRole(roleId, {
+      name: editRoleName.trim(),
+      color: editRoleColor,
+      isExecutive: editRoleIsExec,
+      baseAllowance: Math.max(0, editRoleBaseAllowance),
+      description: editRoleDesc.trim(),
+    });
+    setEditingRoleId(null);
+    alert("役職情報を更新しました！");
+  };
+
+  // 役職削除
+  const handleDeleteRole = (role: CustomRole) => {
+    if (!confirm(`本当に役職「${role.name}」を削除しますか？`)) return;
+    const res = deleteRole(role.id);
+    alert(res.message);
+  };
+
+  // カテゴリー追加ハンドラ
+  const handleAddCategorySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCatName.trim()) {
+      alert("カテゴリー名を入力してください。");
+      return;
+    }
+    addCategory({
+      name: newCatName.trim(),
+      order: Number(newCatOrder) || 1,
+      color: newCatColor,
+      icon: newCatIcon || "📁",
+      targetType: "all",
+    });
+    setNewCatName("");
+    setNewCatOrder(categories.length + 2);
+    setIsAddCatModalOpen(false);
+    alert(`カテゴリー「${newCatName}」を追加しました！`);
+  };
+
+  const handleStartEditCategory = (cat: ItemCategory) => {
+    setEditingCatId(cat.id);
+    setEditCatName(cat.name);
+    setEditCatOrder(cat.order);
+    setEditCatColor(cat.color || "amber");
+    setEditCatIcon(cat.icon || "📁");
+  };
+
+  const handleSaveCategoryEdit = (id: string) => {
+    if (!editCatName.trim()) {
+      alert("カテゴリー名を入力してください。");
+      return;
+    }
+    updateCategory(id, {
+      name: editCatName.trim(),
+      order: Number(editCatOrder) || 1,
+      color: editCatColor,
+      icon: editCatIcon || "📁",
+    });
+    setEditingCatId(null);
+    alert("カテゴリー情報を更新しました！");
+  };
+
+  const handleDeleteCategoryClick = (cat: ItemCategory) => {
+    if (!confirm(`本当にカテゴリー「${cat.name}」を削除しますか？`)) return;
+    const res = deleteCategory(cat.id);
+    alert(res.message);
+  };
+
+  // 商品・素材 編集開始
+  const handleStartEditItem = (item: Item) => {
+    setEditingItemId(item.id);
+    setEditItemShopId(item.shopId || "factory");
+    setEditItemName(item.name);
+    setEditItemType(item.type);
+    setEditItemCategory(item.category_name || (item.type === "product" ? "車両整備・修理" : "素材・スクラップ"));
+    setEditItemPrice(item.selling_price || 0);
+    setEditItemStock(item.current_stock || 0);
+    setEditItemUnit(item.unit || "個");
+    setEditItemImageUrl(item.image_url || "");
+  };
+
+  // 商品・素材 編集保存
+  const handleSaveItemEdit = (itemId: string) => {
+    if (!editItemName.trim()) {
+      alert("品名を入力してください。");
+      return;
+    }
+    updateItem(itemId, {
+      name: editItemName.trim(),
+      type: editItemType,
+      shopId: editItemType === "product" ? editItemShopId : undefined,
+      category_name: editItemCategory.trim(),
+      selling_price: editItemType === "product" ? Math.max(0, editItemPrice) : 0,
+      current_stock: Math.max(0, editItemStock),
+      unit: editItemUnit.trim() || "個",
+      image_url: editItemImageUrl || undefined,
+    });
+    setEditingItemId(null);
+    alert("品目情報を更新しました！");
+  };
+
+  // 商品・素材 削除
+  const handleDeleteItem = (item: Item) => {
+    if (
+      !confirm(
+        `本当に「${item.name}」(${item.type === "product" ? "料理商品" : "素材"})を削除しますか？\n※削除すると販売画面や在庫一覧からも完全に削除されます。`
+      )
+    ) {
+      return;
+    }
+    const res = deleteItem(item.id);
+    alert(res.message);
+  };
+
+  // 従業員PASS保存
+  const handleSavePass = (userId: string) => {
+    if (!editPassInput.trim()) {
+      alert("PASSを入力してください。");
+      return;
+    }
+    updateUserPass(userId, editPassInput.trim());
+    setEditingUserId(null);
+    setEditPassInput("");
+  };
+
+  // 従業員ゲーム内ID保存
+  const handleSaveGameId = (userId: string) => {
+    updateUserGameId(userId, editGameIdInput.trim());
+    setEditingGameIdUserId(null);
+    setEditGameIdInput("");
+  };
+
+  // 解雇ロールのスタッフ判定 (ロール名に「解雇」が含まれるか判定)
+  const isDismissedUser = (u: StaffUser): boolean => {
+    if (!u) return false;
+    const role = roles.find((r) => r.id === u.roleId);
+    const rName = (u.roleName || role?.name || "").toLowerCase();
+    return Boolean(rName.includes("解雇") || (u.roleId && u.roleId.includes("dismissed")));
+  };
+
+  // 従業員一覧の並び替え（解雇ロールは必ず最下部に固定）
+  const sortedUsers = [...users].sort((a, b) => {
+    const aDismissed = isDismissedUser(a);
+    const bDismissed = isDismissedUser(b);
+    // 1. 解雇ロールのスタッフは絶対に最下部に集約
+    if (aDismissed && !bDismissed) return 1;
+    if (!aDismissed && bDismissed) return -1;
+
+    // 2. モード別の並び替え
+    if (employeeSortMode === "name") {
+      return a.displayName.localeCompare(b.displayName, "ja");
+    }
+    if (employeeSortMode === "date") {
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    }
+    if (employeeSortMode === "role") {
+      if (a.role === "executive" && b.role !== "executive") return -1;
+      if (a.role !== "executive" && b.role === "executive") return 1;
+      const aRoleIdx = roles.findIndex((r) => r.id === a.roleId);
+      const bRoleIdx = roles.findIndex((r) => r.id === b.roleId);
+      if (aRoleIdx !== -1 && bRoleIdx !== -1 && aRoleIdx !== bRoleIdx) {
+        return aRoleIdx - bRoleIdx;
+      }
+    }
+    // カスタム順 (order 昇順)
+    return (a.order ?? 0) - (b.order ?? 0);
+  });
+
+  // 従業員カードの並び替え (⬆️ / ⬇️)
+  const handleMoveUser = (userId: string, direction: "up" | "down") => {
+    const list = [...sortedUsers];
+    const idx = list.findIndex((u) => u.id === userId);
+    if (idx === -1) return;
+    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= list.length) return;
+
+    // 解雇スタッフと通常スタッフの境界をまたいで移動させない
+    if (isDismissedUser(list[idx]) !== isDismissedUser(list[targetIdx])) return;
+
+    const temp = list[idx];
+    list[idx] = list[targetIdx];
+    list[targetIdx] = temp;
+
+    setEmployeeSortMode("custom");
+    updateUsersOrder(list);
+  };
+
+  // クイック並び替え
+  const handleApplyQuickSort = (mode: "role" | "name" | "date") => {
+    setEmployeeSortMode(mode);
+    const sorted = [...users].sort((a, b) => {
+      const aDismissed = isDismissedUser(a);
+      const bDismissed = isDismissedUser(b);
+      if (aDismissed && !bDismissed) return 1;
+      if (!aDismissed && bDismissed) return -1;
+      if (mode === "name") return a.displayName.localeCompare(b.displayName, "ja");
+      if (mode === "date") return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      if (mode === "role") {
+        if (a.role === "executive" && b.role !== "executive") return -1;
+        if (a.role !== "executive" && b.role === "executive") return 1;
+        const aRoleIdx = roles.findIndex((r) => r.id === a.roleId);
+        const bRoleIdx = roles.findIndex((r) => r.id === b.roleId);
+        if (aRoleIdx !== -1 && bRoleIdx !== -1 && aRoleIdx !== bRoleIdx) return aRoleIdx - bRoleIdx;
+      }
+      return 0;
+    });
+    updateUsersOrder(sorted);
+  };
+
+  // 選択中の週サマリーを取得（日曜始まり土曜締め）
+  const currentWeeklySummary = getWeeklySummary(selectedWeekKey);
+
+  // スタッフ別入力値ヘルパー（週ごとの複合キーで管理）
+  const getStaffBonusInput = (userId: string, currentAmount: number) => {
+    const key = `${selectedWeekKey}_${userId}`;
+    return weeklyBonusInputs[key] !== undefined ? weeklyBonusInputs[key] : currentAmount;
+  };
+
+  const getStaffBonusNote = (userId: string, currentNote?: string) => {
+    const key = `${selectedWeekKey}_${userId}`;
+    return weeklyBonusNotes[key] !== undefined ? weeklyBonusNotes[key] : (currentNote || "");
+  };
+
+  // 各スタッフの素材調達数ヘルパー（自動集計値）
+  const getStaffIngredientCount = (stat: StaffWeeklyStat) => {
+    return stat.ingredientItemsCount || 0;
+  };
+
+  // スタッフの役職に応じた基本手当を取得
+  const getStaffRoleAllowance = (stat: StaffWeeklyStat): number => {
+    const staffRole =
+      roles.find((r) => r.id === stat.roleId) ||
+      roles.find((r) => r.name === stat.roleName);
+    return staffRole?.baseAllowance ?? baseAllowance;
+  };
+
+  // 目安ボーナス（自動推奨値）の計算
+  // 売上時はゲーム内ですでに3割をインセンティブとして手渡し済み。
+  // 店舗手元残り（7割）からの還元率 + クラフト仕込み手当 + 素材調達手当 + ロール別基本手当
+  const calculateRecommendedWeeklyBonus = (stat: StaffWeeklyStat) => {
+    const storeRemainingShare = Math.round(stat.storeRemaining70 * (storeRemainingBonusRate / 100));
+    const craftReward = storeSettings.enableCrafting ? stat.craftItemsCount * craftRewardRate : 0;
+    const ingCount = getStaffIngredientCount(stat);
+    const ingredientReward = storeSettings.enableInventory ? ingCount * ingredientRewardRate : 0;
+    const roleAllowance = getStaffRoleAllowance(stat);
+    return roleAllowance + storeRemainingShare + craftReward + ingredientReward;
+  };
+
+  // 1人のボーナス保存
+  const handleSaveStaffWeeklyBonus = (userId: string) => {
+    const stat = currentWeeklySummary.staffStats.find((s) => s.userId === userId);
+    if (!stat) return;
+    const amount = getStaffBonusInput(userId, stat.bonusAmount);
+    const note = getStaffBonusNote(userId, stat.bonusNote);
+    const ingCount = getStaffIngredientCount(stat);
+
+    saveWeeklyBonus(selectedWeekKey, { [userId]: { amount, note, ingredientCount: ingCount } });
+    setSaveSuccessMap((prev) => ({ ...prev, [userId]: true }));
+    setTimeout(() => {
+      setSaveSuccessMap((prev) => ({ ...prev, [userId]: false }));
+    }, 2500);
+  };
+
+  // 推奨額を入力欄に反映
+  const handleApplyRecommendedToStaff = (stat: StaffWeeklyStat) => {
+    const rec = calculateRecommendedWeeklyBonus(stat);
+    const allowance = getStaffRoleAllowance(stat);
+    const ingCount = getStaffIngredientCount(stat);
+    const key = `${selectedWeekKey}_${stat.userId}`;
+    setWeeklyBonusInputs((prev) => ({ ...prev, [key]: rec }));
+    const ingText = storeSettings.enableInventory && ingCount > 0 ? `+素材手当(¥${ingredientRewardRate}×${ingCount}個)` : "";
+    const craftText = storeSettings.enableCrafting && stat.craftItemsCount > 0 ? `+仕込手当(¥${craftRewardRate}×${stat.craftItemsCount}個)` : "";
+    setWeeklyBonusNotes((prev) => ({
+      ...prev,
+      [key]: `店舗残り${storeRate}%歩合${storeRemainingBonusRate}%${craftText}${ingText}+${stat.roleName || "役職"}手当(¥${allowance.toLocaleString()})`,
+    }));
+  };
+
+  // 全スタッフに推奨額を一括反映
+  const handleApplyAllRecommended = () => {
+    const newInputs: { [key: string]: number } = {};
+    const newNotes: { [key: string]: string } = {};
+    currentWeeklySummary.staffStats.forEach((stat) => {
+      const rec = calculateRecommendedWeeklyBonus(stat);
+      const allowance = getStaffRoleAllowance(stat);
+      const ingCount = getStaffIngredientCount(stat);
+      const key = `${selectedWeekKey}_${stat.userId}`;
+      newInputs[key] = rec;
+      const ingText = storeSettings.enableInventory && ingCount > 0 ? `+素材手当(¥${ingredientRewardRate}×${ingCount}個)` : "";
+      const craftText = storeSettings.enableCrafting && stat.craftItemsCount > 0 ? `+仕込手当(¥${craftRewardRate}×${stat.craftItemsCount}個)` : "";
+      newNotes[key] = `店舗残り${storeRate}%歩合${storeRemainingBonusRate}%${craftText}${ingText}+${stat.roleName || "役職"}手当(¥${allowance.toLocaleString()})`;
+    });
+    setWeeklyBonusInputs((prev) => ({ ...prev, ...newInputs }));
+    setWeeklyBonusNotes((prev) => ({ ...prev, ...newNotes }));
+    alert("全スタッフに試算推奨ボーナス額（素材手当含む）を一括反映しました！内容を調整後、保存または週次確定を行ってください。");
+  };
+
+  // ボーナス査定のやり直し・リセット（全スタッフ推奨額で初期化）
+  const handleResetAndReapplyAllBonuses = () => {
+    if (!confirm(`【${currentWeeklySummary.weekLabel}】の全スタッフのボーナス入力をやり直しますか？\n入力欄をすべてクリアし、最新の査定ルールに基づく推奨額にリセットします。`)) {
+      return;
+    }
+    const newInputs: { [key: string]: number } = {};
+    const newNotes: { [key: string]: string } = {};
+    currentWeeklySummary.staffStats.forEach((stat) => {
+      const rec = calculateRecommendedWeeklyBonus(stat);
+      const allowance = getStaffRoleAllowance(stat);
+      const ingCount = getStaffIngredientCount(stat);
+      const key = `${selectedWeekKey}_${stat.userId}`;
+      newInputs[key] = rec;
+      const ingText = storeSettings.enableInventory && ingCount > 0 ? `+素材手当(¥${ingredientRewardRate}×${ingCount}個)` : "";
+      const craftText = storeSettings.enableCrafting && stat.craftItemsCount > 0 ? `+仕込手当(¥${craftRewardRate}×${stat.craftItemsCount}個)` : "";
+      newNotes[key] = `店舗残り${storeRate}%歩合${storeRemainingBonusRate}%${craftText}${ingText}+${stat.roleName || "役職"}手当(¥${allowance.toLocaleString()})`;
+    });
+    setWeeklyBonusInputs((prev) => {
+      const copy = { ...prev };
+      currentWeeklySummary.staffStats.forEach((s) => delete copy[`${selectedWeekKey}_${s.userId}`]);
+      return { ...copy, ...newInputs };
+    });
+    setWeeklyBonusNotes((prev) => {
+      const copy = { ...prev };
+      currentWeeklySummary.staffStats.forEach((s) => delete copy[`${selectedWeekKey}_${s.userId}`]);
+      return { ...copy, ...newNotes };
+    });
+    alert(`【${currentWeeklySummary.weekLabel}】のボーナス額を推奨計算でリセット・やり直しました！確認の上「全員分を一括保存」してください。`);
+  };
+
+  // 全スタッフの入力を一括保存
+  const handleSaveAllStaffBonuses = () => {
+    const updates: { [userId: string]: { amount: number; note?: string; ingredientCount?: number } } = {};
+    currentWeeklySummary.staffStats.forEach((stat) => {
+      updates[stat.userId] = {
+        amount: getStaffBonusInput(stat.userId, stat.bonusAmount),
+        note: getStaffBonusNote(stat.userId, stat.bonusNote),
+        ingredientCount: getStaffIngredientCount(stat),
+      };
+    });
+    saveWeeklyBonus(selectedWeekKey, updates);
+    alert("全スタッフのボーナス額・メモ・素材調達数を保存しました！");
+  };
+
+  // 週次ボーナスの最終確定（店主 kein）
+  const handleFinalizeWeek = () => {
+    if (
+      !confirm(
+        `【${currentWeeklySummary.weekLabel}】のボーナス支給額を最終確定しますか？\n確定後は支給決定総額が確定ステータスとして固定され、操作ログに公式記録されます。`
+      )
+    ) {
+      return;
+    }
+    // 未保存の入力があれば先に保存
+    const updates: { [userId: string]: { amount: number; note?: string; ingredientCount?: number } } = {};
+    currentWeeklySummary.staffStats.forEach((stat) => {
+      updates[stat.userId] = {
+        amount: getStaffBonusInput(stat.userId, stat.bonusAmount),
+        note: getStaffBonusNote(stat.userId, stat.bonusNote),
+        ingredientCount: getStaffIngredientCount(stat),
+      };
+    });
+    saveWeeklyBonus(selectedWeekKey, updates);
+
+    finalizeWeeklyBonus(selectedWeekKey);
+    alert(`🎉 ${currentWeeklySummary.weekLabel} のボーナスを最終確定しました！`);
+  };
+
+  // 確定解除（再編集）
+  const handleUnfinalizeWeek = () => {
+    if (
+      !confirm(
+        `【${currentWeeklySummary.weekLabel}】の確定を解除して再編集可能にしますか？`
+      )
+    ) {
+      return;
+    }
+    unfinalizeWeeklyBonus(selectedWeekKey);
+    alert(`確定を解除しました。金額の再調整が可能です。`);
+  };
+
+  // 2. レシピ編集開始
+  const handleStartEditRecipe = (product: Item) => {
+    setEditingRecipeProductId(product.id);
+    setTempRecipe(product.recipe ? [...product.recipe] : []);
+    setSelectedIngredientId(ingredients[0]?.id || "");
+    setIngredientQuantity(1);
+  };
+
+  // レシピに素材を追加
+  const handleAddIngredientToRecipe = () => {
+    if (!selectedIngredientId) return;
+    const ing = ingredients.find((i) => i.id === selectedIngredientId);
+    if (!ing) return;
+
+    // 既存に既にあれば数量加算、なければ追加
+    const existingIndex = tempRecipe.findIndex((r) => r.ingredient_id === selectedIngredientId);
+    if (existingIndex >= 0) {
+      const updated = [...tempRecipe];
+      updated[existingIndex].quantity += ingredientQuantity;
+      setTempRecipe(updated);
+    } else {
+      setTempRecipe([
+        ...tempRecipe,
+        {
+          ingredient_id: ing.id,
+          ingredient_name: ing.name,
+          quantity: ingredientQuantity,
+          unit: ing.unit,
+        },
+      ]);
+    }
+  };
+
+  // レシピから素材を削除
+  const handleRemoveIngredientFromRecipe = (index: number) => {
+    setTempRecipe(tempRecipe.filter((_, idx) => idx !== index));
+  };
+
+  // レシピの保存
+  const handleSaveRecipe = (productId: string) => {
+    updateRecipe(productId, tempRecipe);
+    setEditingRecipeProductId(null);
+    alert("クラフトレシピを保存しました！「作成」ボタン時にこの素材が自動消費されます。");
+  };
+
+  // 販売価格の即時保存
+  const handleSavePrice = (productId: string) => {
+    const newPrice = tempPrices[productId];
+    if (newPrice === undefined || isNaN(newPrice) || newPrice < 0) {
+      alert("有効な金額を入力してください。");
+      return;
+    }
+    updatePrice(productId, newPrice);
+    alert(`販売価格を ¥${newPrice.toLocaleString()} に変更しました！`);
+  };
+
+  // 3. 新規アイテム登録
+  const handleCreateItem = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!itemName.trim()) {
+      alert("品名を入力してください。");
+      return;
+    }
+
+    addItem({
+      name: itemName.trim(),
+      type: itemType,
+      shopId: itemType === "product" ? itemShopId : undefined,
+      category_name: itemCategory,
+      selling_price: itemType === "product" ? itemPrice : 0,
+      cost_price: 0,
+      current_stock: Math.max(0, itemInitialStock),
+      optimal_stock: 50,
+      alert_threshold: 5,
+      unit: itemUnit.trim() || "個",
+      image_url: itemImageUrl || undefined,
+      recipe: itemType === "product" ? [] : undefined,
+    });
+
+    setItemName("");
+    setItemPrice(1000);
+    setItemInitialStock(20);
+    setItemImageUrl("");
+    const targetShop = shops.find((s) => s.id === itemShopId);
+    const shopLabel = itemType === "product" ? (targetShop ? `【${targetShop.name}】` : "【商品】") : "【共通素材】";
+    alert(`${shopLabel}「${itemName}」を新規登録しました！`);
+  };
+
+  // サイト屋号 & ブランド設定保存ハンドラ
+  const handleSaveBranding = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!brandSiteName.trim()) {
+      alert("サイト屋号（店名）を入力してください。");
+      return;
+    }
+    updateSiteBranding({
+      siteName: brandSiteName.trim(),
+      siteSubtitle: brandSiteSubtitle.trim(),
+      logoUrl: brandLogoUrl.trim() || "/logo.png",
+      themeColor: brandThemeColor,
+    });
+    setBrandSavedNotice(true);
+    setTimeout(() => setBrandSavedNotice(false), 3000);
+  };
+
+  // 新規店舗追加ハンドラ
+  const handleAddShopSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newShopName.trim()) {
+      alert("店舗名を入力してください。");
+      return;
+    }
+    addShop({
+      name: newShopName.trim(),
+      shortName: newShopShortName.trim() || newShopName.trim(),
+      icon: newShopIcon.trim() || "🏪",
+      themeColor: newShopThemeColor,
+      description: newShopDesc.trim(),
+    });
+    setNewShopName("");
+    setNewShopShortName("");
+    setNewShopIcon("🏪");
+    setNewShopThemeColor("amber");
+    setNewShopDesc("");
+    setIsAddShopModalOpen(false);
+    alert(`新店舗「${newShopName.trim()}」を追加しました！`);
+  };
+
+  // 店舗編集開始
+  const handleStartEditShop = (shop: ShopDefinition) => {
+    setEditingShopId(shop.id);
+    setEditShopName(shop.name);
+    setEditShopShortName(shop.shortName);
+    setEditShopIcon(shop.icon);
+    setEditShopThemeColor(shop.themeColor || "amber");
+    setEditShopDesc(shop.description || "");
+  };
+
+  // 店舗編集保存
+  const handleSaveEditShop = (shopId: string) => {
+    if (!editShopName.trim()) {
+      alert("店舗名を入力してください。");
+      return;
+    }
+    updateShop(shopId, {
+      name: editShopName.trim(),
+      shortName: editShopShortName.trim() || editShopName.trim(),
+      icon: editShopIcon.trim() || "🏪",
+      themeColor: editShopThemeColor,
+      description: editShopDesc.trim(),
+    });
+    setEditingShopId(null);
+    alert("店舗情報を更新しました！");
+  };
+
+  // 店舗削除
+  const handleDeleteShopClick = (shop: ShopDefinition) => {
+    if (!confirm(`本当に店舗「${shop.name}」を削除しますか？\n※所属する商品がある場合は削除できません。`)) {
+      return;
+    }
+    const res = deleteShop(shop.id);
+    alert(res.message);
+  };
+
+  // 4. ログ絞り込み
+  const filteredLogs = actionLogs.filter((log) => {
+    if (logFilter === "all") return true;
+    return log.category === logFilter;
+  });
+
+  // 幹部権限チェック（一般スタッフの場合はアクセス制限画面を表示）
+  if (currentUser?.role !== "executive") {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[70vh] p-6 text-center text-white">
+        <div className="w-16 h-16 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4 shadow-lg shadow-amber-950/30">
+          <Lock className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-black mb-2">幹部専用ページです</h2>
+        <p className="text-xs text-stone-400 max-w-sm mb-6 leading-relaxed">
+          このページは店主・店長などの幹部権限を持つアカウントのみ閲覧・操作可能です。<br />
+          権限が必要な場合は店主（kein）までお問い合わせください。
+        </p>
+        <Link
+          href="/"
+          className="px-5 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold border border-stone-700 transition-all flex items-center gap-2"
+        >
+          <span>売上・作成トップ画面に戻る</span>
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto p-4 md:p-6 pb-16">
+      {/* リアルタイム同期通知 */}
+      {realtimeNotice && (
+        <div className="bg-amber-500/20 border border-amber-500/40 text-amber-300 px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 animate-bounce">
+          <Radio className="w-4 h-4 text-amber-400 animate-pulse" />
+          <span>{realtimeNotice}</span>
+        </div>
+      )}
+
+      {/* 幹部専用ヘッダー */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-stone-900 border border-stone-800 p-6 rounded-3xl text-white shadow-xl">
+        <div className="flex items-center gap-3">
+          <div className={`w-14 h-14 rounded-2xl bg-stone-950 border-2 ${theme.accentBorder} p-1 flex items-center justify-center shadow-lg shrink-0 overflow-hidden`}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={siteBranding.logoUrl || "/logo.png"} alt={siteBranding.siteName} className="w-full h-full object-contain" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={`p-1 rounded-lg ${theme.primaryBtn}`}>
+                <ShieldCheck className="w-4 h-4" />
+              </span>
+              <h1 className="text-2xl font-black tracking-tight">幹部専用 管理コンソール</h1>
+              <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${theme.accentBadge}`}>
+                {shops.map((s) => s.name).join(" & ") || siteBranding.siteName}
+              </span>
+            </div>
+            <p className="text-xs text-stone-400 mt-1">
+              従業員の追加・PASS設定、給与ボーナス査定、料理の販売価格・クラフトレシピ設定、画像アップロード、操作ログ監査
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3.5 flex-wrap justify-end">
+          {/* ゲーム内金庫残高ハイライトカード */}
+          <div className={`flex items-center gap-3 px-3.5 py-2 rounded-2xl bg-stone-950 border ${theme.accentBorder} shadow-md`}>
+            <div className={`w-8 h-8 rounded-xl ${theme.accentBg} ${theme.accentText} flex items-center justify-center`}>
+              <Landmark className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-stone-400 block">ゲーム内金庫残高</span>
+              <span className={`text-sm sm:text-base font-black ${theme.accentText}`}>
+                {formatCurrency(vaultBalance)}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleOpenVaultModal}
+              className={`ml-1 px-2.5 py-1 rounded-lg ${theme.primaryBtn} text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95`}
+              title="金庫残高を手動で直接調整する"
+            >
+              <Edit2 className="w-3 h-3" />
+              調整
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2.5 pl-2 border-l border-stone-800">
+            <div className="text-right">
+              <span className="text-[10px] text-stone-400 block">ログイン中の幹部</span>
+              <span className={`text-xs font-black ${theme.accentText}`}>{currentUser.displayName}</span>
+            </div>
+            <div className={`w-9 h-9 rounded-full ${theme.accentBg} border ${theme.accentBorder} flex items-center justify-center ${theme.accentText} font-black text-sm`}>
+              👑
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 幹部タブラベル */}
+      <div className="flex flex-wrap gap-2 border-b border-stone-800 pb-3">
+        {(
+          [
+            { id: "summary", label: "📊 店舗運営サマリー", icon: TrendingUp },
+            { id: "statistics", label: "📈 詳細統計一覧", icon: BarChart3 },
+            { id: "users", label: `👥 従業員 & PASS管理 (${users.length}名)`, icon: Users },
+            { id: "roles", label: `🏷️ 役職（ロール）設定 (${roles.length}種)`, icon: Tag },
+            { id: "bonus", label: "💰 ボーナス査定 & 支給管理", icon: Coins },
+            { id: "recipes", label: `⚙️ レシピ & 価格設定 (${products.length}商品)`, icon: Sparkles },
+            { id: "items", label: `🍱 商品・素材登録 & 変更 (${items.length}品目)`, icon: ImageIcon },
+            { id: "logs", label: `📜 店舗操作ログ監査 (${actionLogs.length}件)`, icon: History },
+            { id: "settings", label: "⚙️ 店舗・機能利用設定", icon: Sliders },
+          ] as { id: ExecutiveTab; label: string; icon: typeof TrendingUp }[]
+        ).map((tab) => {
+          const isActive = activeTab === tab.id;
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2.5 rounded-2xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+                isActive
+                  ? theme.tabActive
+                  : "bg-stone-900/90 text-stone-300 hover:bg-stone-800 hover:text-white border border-stone-800"
+              }`}
+            >
+              <Icon className={`w-4 h-4 ${isActive ? "text-inherit" : theme.accentText}`} />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ========================================================
+          タブ0: 📊 店舗運営サマリー（経営ダッシュボード）
+      ======================================================== */}
+      {activeTab === "summary" && (() => {
+        // 店舗別売上の集計（WeeklySummary に集計済み）
+        const sakuraTotal = currentWeeklySummary.sakura.salesAmount;
+        const buonTotal = currentWeeklySummary.buonViaggio.salesAmount;
+        const sakuraItems = currentWeeklySummary.sakura.itemsSold;
+        const buonItems = currentWeeklySummary.buonViaggio.itemsSold;
+
+        // 総素材調達数
+        const summaryTotalIngredients = currentWeeklySummary.staffStats.reduce(
+          (acc, s) => acc + getStaffIngredientCount(s),
+          0
+        );
+
+        // 各種ランキング Top5
+        const topSalesStaff = [...currentWeeklySummary.staffStats]
+          .filter((s) => s.salesAmount > 0)
+          .sort((a, b) => b.salesAmount - a.salesAmount)
+          .slice(0, 5);
+        const maxSales = topSalesStaff[0]?.salesAmount || 1;
+
+        const topCraftStaff = [...currentWeeklySummary.staffStats]
+          .filter((s) => s.craftItemsCount > 0)
+          .sort((a, b) => b.craftItemsCount - a.craftItemsCount)
+          .slice(0, 5);
+        const maxCraft = topCraftStaff[0]?.craftItemsCount || 1;
+
+        const topIngredientStaff = [...currentWeeklySummary.staffStats]
+          .map((s) => ({ ...s, count: getStaffIngredientCount(s) }))
+          .filter((s) => s.count > 0)
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5);
+        const maxIngredient = topIngredientStaff[0]?.count || 1;
+
+        // 順位バッジヘルパー
+        const getRankBadge = (idx: number) => {
+          if (idx === 0) return <span className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs font-black flex items-center justify-center">🥇</span>;
+          if (idx === 1) return <span className="w-6 h-6 rounded-full bg-stone-300/20 text-stone-200 border border-stone-400/40 text-xs font-black flex items-center justify-center">🥈</span>;
+          if (idx === 2) return <span className="w-6 h-6 rounded-full bg-amber-700/20 text-amber-600 border border-amber-700/40 text-xs font-black flex items-center justify-center">🥉</span>;
+          return <span className="w-6 h-6 rounded-full bg-stone-800 text-stone-400 border border-stone-700 text-xs font-bold flex items-center justify-center">{idx + 1}</span>;
+        };
+
+        return (
+          <div className="space-y-6">
+            {/* ヘッダー & 対象期間選択 */}
+            <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-full text-xs font-black bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                    EXECUTIVE DASHBOARD
+                  </span>
+                  <span className="text-xs text-stone-400">リアルタイム経営集計</span>
+                </div>
+                <h2 className="text-lg font-black text-white mt-1 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-amber-500" />
+                  店舗運営サマリー
+                </h2>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 bg-stone-950/80 px-3.5 py-2 rounded-2xl border border-stone-800">
+                  <Calendar className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span className="text-xs text-stone-400 font-bold">集計期間:</span>
+                  <select
+                    value={selectedWeekKey}
+                    onChange={(e) => setSelectedWeekKey(e.target.value)}
+                    className="bg-stone-900 text-stone-100 text-xs font-black rounded-lg px-2.5 py-1 border border-stone-700 focus:outline-none focus:border-amber-500 cursor-pointer"
+                  >
+                    {availableWeeks.map((w, idx) => (
+                      <option key={w.weekKey} value={w.weekKey}>
+                        {idx === 0 ? "今週 (集計中): " : ""}{w.weekLabel}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  onClick={handleOpenVaultModal}
+                  className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-200 hover:text-white rounded-2xl text-xs font-bold border border-stone-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <Landmark className="w-3.5 h-3.5 text-emerald-400" />
+                  金庫残高を同期・調整
+                </button>
+              </div>
+            </div>
+
+            {/* 4大重要指標カード */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* 1. 金庫残高 */}
+              <div className="bg-stone-900/90 p-5 rounded-3xl border border-emerald-900/40 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-stone-400 flex items-center gap-1.5">
+                    <Landmark className="w-4 h-4 text-emerald-400" />
+                    金庫保管残高
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-950/60 text-emerald-400 border border-emerald-800/50">
+                    POOL
+                  </span>
+                </div>
+                <div className="text-2xl font-black text-emerald-300 tracking-tight">
+                  {formatCurrency(vaultBalance)}
+                </div>
+                <div className="text-[11px] text-stone-500 mt-2">
+                  店舗手元純残り累積・ボーナス原資
+                </div>
+              </div>
+
+              {/* 2. 週次総売上高 */}
+              <div className="bg-stone-900/90 p-5 rounded-3xl border border-amber-900/40 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-stone-400 flex items-center gap-1.5">
+                    <TrendingUp className="w-4 h-4 text-amber-500" />
+                    期間総売上高
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-950/60 text-amber-400 border border-amber-800/50">
+                    TOTAL
+                  </span>
+                </div>
+                <div className="text-2xl font-black text-white tracking-tight">
+                  {formatCurrency(currentWeeklySummary.totalSales)}
+                </div>
+                <div className="text-[11px] text-stone-400 mt-2 flex items-center justify-between">
+                  <span>純残({storeRate}%): <span className="font-bold text-amber-400">{formatCurrency(currentWeeklySummary.totalStoreRemaining70)}</span></span>
+                  <span>手渡し済: <span className="font-bold text-stone-300">{formatCurrency(currentWeeklySummary.totalIncentive30)}</span></span>
+                </div>
+              </div>
+
+              {/* 3. 厨房仕込み数 */}
+              <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-stone-400 flex items-center gap-1.5">
+                    <Utensils className="w-4 h-4 text-amber-500" />
+                    料理仕込み総数
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-stone-800 text-stone-300 border border-stone-700">
+                    CRAFT
+                  </span>
+                </div>
+                <div className="text-2xl font-black text-amber-400 tracking-tight">
+                  {currentWeeklySummary.totalCraftItems.toLocaleString()} <span className="text-sm font-bold text-stone-400">個</span>
+                </div>
+                <div className="text-[11px] text-stone-500 mt-2">
+                  仕込み手当目安: ¥{(currentWeeklySummary.totalCraftItems * craftRewardRate).toLocaleString()}
+                </div>
+              </div>
+
+              {/* 4. 素材調達数 */}
+              <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-stone-400 flex items-center gap-1.5">
+                    <Boxes className="w-4 h-4 text-amber-500" />
+                    素材調達総数
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-stone-800 text-stone-300 border border-stone-700">
+                    ITEMS
+                  </span>
+                </div>
+                <div className="text-2xl font-black text-amber-300 tracking-tight">
+                  {summaryTotalIngredients.toLocaleString()} <span className="text-sm font-bold text-stone-400">個</span>
+                </div>
+                <div className="text-[11px] text-stone-500 mt-2">
+                  調達手当目安: ¥{(summaryTotalIngredients * ingredientRewardRate).toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            {/* 店舗別実績比較 */}
+            <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-black text-white flex items-center gap-2">
+                  <Store className="w-4 h-4 text-amber-500" />
+                  店舗別 売上 & 純残り内訳
+                </h3>
+                <span className="text-[11px] text-stone-500">
+                  店舗手元純残り: {storeRate}% / スタッフ手渡し: {staffIncentiveRate}%
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 和食さくら */}
+                <div className="bg-stone-950/70 p-4 rounded-2xl border border-stone-800/80">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🌸</span>
+                      <div>
+                        <span className="font-black text-stone-100 text-sm">和食さくら</span>
+                        <span className="text-[11px] text-stone-500 ml-2">販売 {sakuraItems} 個</span>
+                      </div>
+                    </div>
+                    <span className="text-base font-black text-amber-400">
+                      {formatCurrency(sakuraTotal)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-stone-800">
+                    <div className="bg-stone-900/80 p-2 rounded-xl">
+                      <div className="text-[10px] text-stone-400">店舗手元純残り ({storeRate}%)</div>
+                      <div className="font-bold text-white mt-0.5">
+                        {formatCurrency(Math.round(sakuraTotal * (storeRate / 100)))}
+                      </div>
+                    </div>
+                    <div className="bg-stone-900/80 p-2 rounded-xl">
+                      <div className="text-[10px] text-stone-400">スタッフ手渡し済 ({staffIncentiveRate}%)</div>
+                      <div className="font-bold text-stone-300 mt-0.5">
+                        {formatCurrency(Math.round(sakuraTotal * (staffIncentiveRate / 100)))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Buon viaggio */}
+                <div className="bg-stone-950/70 p-4 rounded-2xl border border-stone-800/80">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🍷</span>
+                      <div>
+                        <span className="font-black text-stone-100 text-sm">Buon viaggio</span>
+                        <span className="text-[11px] text-stone-500 ml-2">販売 {buonItems} 個</span>
+                      </div>
+                    </div>
+                    <span className="text-base font-black text-amber-400">
+                      {formatCurrency(buonTotal)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-stone-800">
+                    <div className="bg-stone-900/80 p-2 rounded-xl">
+                      <div className="text-[10px] text-stone-400">店舗手元純残り ({storeRate}%)</div>
+                      <div className="font-bold text-white mt-0.5">
+                        {formatCurrency(Math.round(buonTotal * (storeRate / 100)))}
+                      </div>
+                    </div>
+                    <div className="bg-stone-900/80 p-2 rounded-xl">
+                      <div className="text-[10px] text-stone-400">スタッフ手渡し済 ({staffIncentiveRate}%)</div>
+                      <div className="font-bold text-stone-300 mt-0.5">
+                        {formatCurrency(Math.round(buonTotal * (staffIncentiveRate / 100)))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 3大ランキング Top5 */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-black text-white flex items-center gap-2">
+                  <Award className="w-4 h-4 text-amber-500" />
+                  従業員 貢献度ランキング Top 5
+                </h3>
+                <button
+                  onClick={() => setActiveTab("bonus")}
+                  className="text-xs text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  ボーナス査定で全員を見る
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* 1. 売上貢献ランキング */}
+                <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between pb-3 border-b border-stone-800 mb-3">
+                      <span className="text-xs font-black text-white flex items-center gap-1.5">
+                        <TrendingUp className="w-4 h-4 text-amber-500" />
+                        売上貢献 Top 5
+                      </span>
+                      <span className="text-[10px] text-stone-400 font-bold">個人売上高</span>
+                    </div>
+
+                    {topSalesStaff.length === 0 ? (
+                      <div className="py-8 text-center text-xs text-stone-500">
+                        該当期間の売上記録がまだありません
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {topSalesStaff.map((stat, idx) => {
+                          const pct = Math.min(100, Math.round((stat.salesAmount / maxSales) * 100));
+                          return (
+                            <div key={stat.userId} className="space-y-1">
+                              <div className="flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {getRankBadge(idx)}
+                                  <span className="font-bold text-stone-200 truncate">
+                                    {stat.displayName || stat.username}
+                                  </span>
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-stone-800 text-stone-400 shrink-0">
+                                    {stat.roleName}
+                                  </span>
+                                </div>
+                                <span className="font-black text-amber-400 shrink-0 ml-2">
+                                  {formatCurrency(stat.salesAmount)}
+                                </span>
+                              </div>
+                              <div className="w-full bg-stone-800 h-1.5 rounded-full overflow-hidden">
+                                <div
+                                  className="bg-amber-500 h-full rounded-full transition-all duration-500"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. 仕込み職人ランキング */}
+                <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between pb-3 border-b border-stone-800 mb-3">
+                      <span className="text-xs font-black text-white flex items-center gap-1.5">
+                        <Utensils className="w-4 h-4 text-amber-500" />
+                        仕込み職人 Top 5
+                      </span>
+                      <span className="text-[10px] text-stone-400 font-bold">料理クラフト数</span>
+                    </div>
+
+                    {topCraftStaff.length === 0 ? (
+                      <div className="py-8 text-center text-xs text-stone-500">
+                        該当期間の仕込み記録がまだありません
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {topCraftStaff.map((stat, idx) => {
+                          const pct = Math.min(100, Math.round((stat.craftItemsCount / maxCraft) * 100));
+                          return (
+                            <div key={stat.userId} className="space-y-1">
+                              <div className="flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {getRankBadge(idx)}
+                                  <span className="font-bold text-stone-200 truncate">
+                                    {stat.displayName || stat.username}
+                                  </span>
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-stone-800 text-stone-400 shrink-0">
+                                    {stat.roleName}
+                                  </span>
+                                </div>
+                                <span className="font-black text-amber-400 shrink-0 ml-2">
+                                  {stat.craftItemsCount.toLocaleString()} <span className="text-[10px] font-normal text-stone-400">個</span>
+                                </span>
+                              </div>
+                              <div className="w-full bg-stone-800 h-1.5 rounded-full overflow-hidden">
+                                <div
+                                  className="bg-amber-500 h-full rounded-full transition-all duration-500"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 3. 素材調達ランキング */}
+                <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between pb-3 border-b border-stone-800 mb-3">
+                      <span className="text-xs font-black text-white flex items-center gap-1.5">
+                        <Boxes className="w-4 h-4 text-amber-500" />
+                        素材調達 Top 5
+                      </span>
+                      <span className="text-[10px] text-stone-400 font-bold">素材調達・納品数</span>
+                    </div>
+
+                    {topIngredientStaff.length === 0 ? (
+                      <div className="py-8 text-center text-xs text-stone-500">
+                        該当期間の素材調達記録がまだありません
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {topIngredientStaff.map((stat, idx) => {
+                          const pct = Math.min(100, Math.round((stat.count / maxIngredient) * 100));
+                          return (
+                            <div key={stat.userId} className="space-y-1">
+                              <div className="flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {getRankBadge(idx)}
+                                  <span className="font-bold text-stone-200 truncate">
+                                    {stat.displayName || stat.username}
+                                  </span>
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-stone-800 text-stone-400 shrink-0">
+                                    {stat.roleName}
+                                  </span>
+                                </div>
+                                <span className="font-black text-amber-400 shrink-0 ml-2">
+                                  {stat.count.toLocaleString()} <span className="text-[10px] font-normal text-stone-400">個</span>
+                                </span>
+                              </div>
+                              <div className="w-full bg-stone-800 h-1.5 rounded-full overflow-hidden">
+                                <div
+                                  className="bg-amber-500 h-full rounded-full transition-all duration-500"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* クイックアクセスリンク */}
+            <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl">
+              <h3 className="text-xs font-bold text-stone-400 mb-3 flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                幹部管理メニュー・クイックアクセス
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <button
+                  onClick={() => setActiveTab("statistics")}
+                  className="p-3.5 bg-stone-950/60 hover:bg-stone-800 border border-stone-800 rounded-2xl text-left transition-all group cursor-pointer"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <BarChart3 className="w-4 h-4 text-amber-500 group-hover:scale-110 transition-transform" />
+                    <ArrowRight className="w-3.5 h-3.5 text-stone-600 group-hover:text-amber-400" />
+                  </div>
+                  <div className="text-xs font-black text-stone-200 group-hover:text-white">詳細統計一覧</div>
+                  <div className="text-[10px] text-stone-500 mt-0.5">全スタッフ・料理・素材分析</div>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("bonus")}
+                  className="p-3.5 bg-stone-950/60 hover:bg-stone-800 border border-stone-800 rounded-2xl text-left transition-all group cursor-pointer"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <Coins className="w-4 h-4 text-amber-500 group-hover:scale-110 transition-transform" />
+                    <ArrowRight className="w-3.5 h-3.5 text-stone-600 group-hover:text-amber-400" />
+                  </div>
+                  <div className="text-xs font-black text-stone-200 group-hover:text-white">ボーナス査定</div>
+                  <div className="text-[10px] text-stone-500 mt-0.5">週次ボーナス決定・支払い</div>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("users")}
+                  className="p-3.5 bg-stone-950/60 hover:bg-stone-800 border border-stone-800 rounded-2xl text-left transition-all group cursor-pointer"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <Users className="w-4 h-4 text-amber-500 group-hover:scale-110 transition-transform" />
+                    <ArrowRight className="w-3.5 h-3.5 text-stone-600 group-hover:text-amber-400" />
+                  </div>
+                  <div className="text-xs font-black text-stone-200 group-hover:text-white">従業員 & PASS</div>
+                  <div className="text-[10px] text-stone-500 mt-0.5">スタッフ追加・並び順設定</div>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("settings")}
+                  className="p-3.5 bg-stone-950/60 hover:bg-stone-800 border border-stone-800 rounded-2xl text-left transition-all group cursor-pointer"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <Sliders className="w-4 h-4 text-amber-500 group-hover:scale-110 transition-transform" />
+                    <ArrowRight className="w-3.5 h-3.5 text-stone-600 group-hover:text-amber-400" />
+                  </div>
+                  <div className="text-xs font-black text-stone-200 group-hover:text-white">店舗設定</div>
+                  <div className="text-[10px] text-stone-500 mt-0.5">純残り割合・機能ON/OFF</div>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("recipes")}
+                  className="p-3.5 bg-stone-950/60 hover:bg-stone-800 border border-stone-800 rounded-2xl text-left transition-all group cursor-pointer"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <Utensils className="w-4 h-4 text-amber-500 group-hover:scale-110 transition-transform" />
+                    <ArrowRight className="w-3.5 h-3.5 text-stone-600 group-hover:text-amber-400" />
+                  </div>
+                  <div className="text-xs font-black text-stone-200 group-hover:text-white">レシピ設定</div>
+                  <div className="text-[10px] text-stone-500 mt-0.5">料理と必要素材の紐付け</div>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ========================================================
+          タブ0.5: 📈 詳細統計一覧（スタッフ・商品・素材・店舗 それぞれの統計）
+      ======================================================== */}
+      {activeTab === "statistics" && (() => {
+        // 1. 期間フィルタリング
+        const activeWeekObj =
+          statsPeriod === "all"
+            ? null
+            : statsPeriod === "current"
+            ? availableWeeks[0]
+            : statsPeriod === "last"
+            ? availableWeeks[1]
+            : availableWeeks.find((w) => w.weekKey === statsPeriod);
+
+        const filteredSales = sales.filter((s) => {
+          if (!activeWeekObj) return true;
+          return isDateInWeek(s.created_at, activeWeekObj.startDate, activeWeekObj.endDate);
+        });
+
+        const filteredLogs = actionLogs.filter((l) => {
+          if (!activeWeekObj) return true;
+          return isDateInWeek(l.created_at, activeWeekObj.startDate, activeWeekObj.endDate);
+        });
+
+        // 全体サマリー値
+        const totalSalesAmount = filteredSales.reduce(
+          (sum, s) => sum + (s.totalAmount ?? s.total_amount ?? 0),
+          0
+        );
+        const totalSalesCount = filteredSales.length;
+        const totalSoldItems = filteredSales.reduce(
+          (sum, s) => sum + (s.items || []).reduce((iSum, it) => iSum + (it.quantity || 0), 0),
+          0
+        );
+        const avgOrderAmount = totalSalesCount > 0 ? Math.round(totalSalesAmount / totalSalesCount) : 0;
+
+        const sakuraSales = filteredSales.filter((s) => (s.shopId || "sakura") === "sakura");
+        const buonSales = filteredSales.filter((s) => s.shopId === "buon_viaggio");
+        const sakuraTotalAmount = sakuraSales.reduce((sum, s) => sum + (s.totalAmount ?? s.total_amount ?? 0), 0);
+        const buonTotalAmount = buonSales.reduce((sum, s) => sum + (s.totalAmount ?? s.total_amount ?? 0), 0);
+        const sakuraItemsSold = sakuraSales.reduce((sum, s) => sum + (s.items || []).reduce((iSum, it) => iSum + (it.quantity || 0), 0), 0);
+        const buonItemsSold = buonSales.reduce((sum, s) => sum + (s.items || []).reduce((iSum, it) => iSum + (it.quantity || 0), 0), 0);
+
+        let totalStoreRemaining = 0;
+        let totalIncentive = 0;
+
+        filteredSales.forEach((s) => {
+          const amt = s.totalAmount ?? s.total_amount ?? 0;
+          if (s.storeRemainingAmount !== undefined && s.staffIncentiveAmount !== undefined) {
+            totalStoreRemaining += s.storeRemainingAmount;
+            totalIncentive += s.staffIncentiveAmount;
+          } else {
+            const rate = s.storeRemainingRate ?? 70;
+            const rem = Math.round(amt * (rate / 100));
+            totalStoreRemaining += rem;
+            totalIncentive += amt - rem;
+          }
+        });
+
+        // クラフト仕込みログ集計
+        const craftLogs = filteredLogs.filter((l) => l.category === "craft");
+        let totalCraftCount = 0;
+        craftLogs.forEach((l) => {
+          const matches = Array.from(l.title.matchAll(/×(\d+)/g));
+          if (matches.length > 0) {
+            for (const m of matches) {
+              totalCraftCount += parseInt(m[1]) || 1;
+            }
+          } else {
+            totalCraftCount += 1;
+          }
+        });
+
+        // 素材調達ログ集計
+        const inventoryLogs = filteredLogs.filter((l) => l.category === "inventory");
+        let totalIngredientCount = 0;
+        inventoryLogs.forEach((l) => {
+          const itemMatch = l.title.match(/\((.+?)\)/);
+          const itemName = itemMatch ? itemMatch[1] : "";
+          const targetItem = items.find((it) => it.name === itemName);
+          const isIngredient = targetItem
+            ? targetItem.type === "ingredient"
+            : l.detail.includes("素材") ||
+              l.detail.includes("仕入") ||
+              l.title.includes("素材") ||
+              l.title.includes("調達");
+
+          if (isIngredient) {
+            const isAdjustmentOnly =
+              l.title.includes("棚卸し") ||
+              l.detail.includes("棚卸し") ||
+              l.detail.includes("数合わせ") ||
+              (l.title.includes("手動調整") &&
+                !l.detail.includes("クイック補充") &&
+                !l.detail.includes("調達") &&
+                !l.detail.includes("納品"));
+            if (isAdjustmentOnly) return;
+
+            const quickMatch = l.detail.match(/クイック補充\s*\(\+(\d+)\)/);
+            if (quickMatch) {
+              totalIngredientCount += parseInt(quickMatch[1], 10) || 0;
+              return;
+            }
+            const procureMatch = l.detail.match(/\+(\d+)/);
+            if (l.title.includes("調達") || l.detail.includes("調達") || l.detail.includes("納品")) {
+              if (procureMatch) {
+                totalIngredientCount += parseInt(procureMatch[1], 10) || 0;
+                return;
+              }
+            }
+            const qtyMatch = l.detail.match(/在庫数(?:を)?\s*(\d+)\s*→\s*(\d+)/);
+            if (qtyMatch) {
+              const before = parseInt(qtyMatch[1], 10) || 0;
+              const after = parseInt(qtyMatch[2], 10) || 0;
+              if (after > before) {
+                totalIngredientCount += after - before;
+              }
+            }
+          }
+        });
+
+        // ----------------------------------------------------
+        // A. スタッフ別集計
+        // ----------------------------------------------------
+        const staffStatsList = users.map((u) => {
+          const userSales = filteredSales.filter(
+            (s) => s.staffUserId === u.id || s.staffName === u.displayName || s.staff_name === u.displayName
+          );
+          const salesAmount = userSales.reduce(
+            (sum, s) => sum + (s.totalAmount ?? s.total_amount ?? 0),
+            0
+          );
+          const sakuraAmt = userSales
+            .filter((s) => (s.shopId || "sakura") === "sakura")
+            .reduce((sum, s) => sum + (s.totalAmount ?? s.total_amount ?? 0), 0);
+          const buonAmt = userSales
+            .filter((s) => s.shopId === "buon_viaggio")
+            .reduce((sum, s) => sum + (s.totalAmount ?? s.total_amount ?? 0), 0);
+          const salesCount = userSales.length;
+          const itemsSold = userSales.reduce(
+            (sum, s) => sum + (s.items || []).reduce((iSum, it) => iSum + (it.quantity || 0), 0),
+            0
+          );
+          const avgOrder = salesCount > 0 ? Math.round(salesAmount / salesCount) : 0;
+
+          let storeRemaining = 0;
+          let incentive = 0;
+          let discountAmount = 0;
+          let discountCount = 0;
+          userSales.forEach((s) => {
+            const amt = s.totalAmount ?? s.total_amount ?? 0;
+            if (s.storeRemainingAmount !== undefined && s.staffIncentiveAmount !== undefined) {
+              storeRemaining += s.storeRemainingAmount;
+              incentive += s.staffIncentiveAmount;
+            } else {
+              const rate = s.storeRemainingRate ?? 70;
+              const rem = Math.round(amt * (rate / 100));
+              storeRemaining += rem;
+              incentive += amt - rem;
+            }
+            const disc = s.discountAmount ?? 0;
+            if (disc > 0) {
+              discountAmount += disc;
+              discountCount += 1;
+            }
+          });
+
+          // クラフト数
+          const userCraftLogs = filteredLogs.filter(
+            (l) => l.userName === u.displayName && l.category === "craft"
+          );
+          let craftCount = 0;
+          userCraftLogs.forEach((l) => {
+            const matches = Array.from(l.title.matchAll(/×(\d+)/g));
+            if (matches.length > 0) {
+              for (const m of matches) {
+                craftCount += parseInt(m[1]) || 1;
+              }
+            } else {
+              craftCount += 1;
+            }
+          });
+
+          // 素材調達数
+          const userInventoryLogs = filteredLogs.filter(
+            (l) =>
+              (l.userName === u.displayName || l.userName === u.username) &&
+              l.category === "inventory"
+          );
+          let ingredientCount = 0;
+          userInventoryLogs.forEach((l) => {
+            const itemMatch = l.title.match(/\((.+?)\)/);
+            const itemName = itemMatch ? itemMatch[1] : "";
+            const targetItem = items.find((it) => it.name === itemName);
+            const isIngredient = targetItem
+              ? targetItem.type === "ingredient"
+              : l.detail.includes("素材") ||
+                l.detail.includes("仕入") ||
+                l.title.includes("素材") ||
+                l.title.includes("調達");
+
+            if (isIngredient) {
+              const isAdjustmentOnly =
+                l.title.includes("棚卸し") ||
+                l.detail.includes("棚卸し") ||
+                l.detail.includes("数合わせ") ||
+                (l.title.includes("手動調整") &&
+                  !l.detail.includes("クイック補充") &&
+                  !l.detail.includes("調達") &&
+                  !l.detail.includes("納品"));
+              if (isAdjustmentOnly) return;
+
+              const quickMatch = l.detail.match(/クイック補充\s*\(\+(\d+)\)/);
+              if (quickMatch) {
+                ingredientCount += parseInt(quickMatch[1], 10) || 0;
+                return;
+              }
+              const procureMatch = l.detail.match(/\+(\d+)/);
+              if (l.title.includes("調達") || l.detail.includes("調達") || l.detail.includes("納品")) {
+                if (procureMatch) {
+                  ingredientCount += parseInt(procureMatch[1], 10) || 0;
+                  return;
+                }
+              }
+              const qtyMatch = l.detail.match(/在庫数(?:を)?\s*(\d+)\s*→\s*(\d+)/);
+              if (qtyMatch) {
+                const before = parseInt(qtyMatch[1], 10) || 0;
+                const after = parseInt(qtyMatch[2], 10) || 0;
+                if (after > before) {
+                  ingredientCount += after - before;
+                }
+              }
+            }
+          });
+
+          return {
+            userId: u.id,
+            username: u.username,
+            displayName: u.displayName,
+            gameId: u.gameId,
+            roleName: u.roleName || (u.role === "executive" ? "幹部" : "スタッフ"),
+            isExecutive: u.role === "executive",
+            salesAmount,
+            sakuraAmount: sakuraAmt,
+            buonAmount: buonAmt,
+            salesCount,
+            itemsSold,
+            avgOrder,
+            craftCount,
+            ingredientCount,
+            storeRemaining,
+            incentive,
+            discountAmount,
+            discountCount,
+          };
+        });
+
+        // ソート
+        const sortedStaffStats = [...staffStatsList].sort((a, b) => {
+          if (statsStaffSort === "sales") return b.salesAmount - a.salesAmount;
+          if (statsStaffSort === "craft") return b.craftCount - a.craftCount;
+          if (statsStaffSort === "ingredient") return b.ingredientCount - a.ingredientCount;
+          if (statsStaffSort === "count") return b.salesCount - a.salesCount;
+          if (statsStaffSort === "remaining") return b.storeRemaining - a.storeRemaining;
+          return 0;
+        });
+        const maxStaffSales = Math.max(...staffStatsList.map((s) => s.salesAmount), 1);
+
+        // ----------------------------------------------------
+        // B. 料理・商品別集計
+        // ----------------------------------------------------
+        const productStatsList = products.map((prod) => {
+          let soldCount = 0;
+          let salesAmount = 0;
+
+          filteredSales.forEach((s) => {
+            s.items?.forEach((it) => {
+              const itId = it.itemId || it.item_id;
+              const itName = it.itemName || it.item_name;
+              if (itId === prod.id || itName === prod.name) {
+                soldCount += it.quantity || 0;
+                salesAmount += (it.unitPrice || 0) * (it.quantity || 0);
+              }
+            });
+          });
+
+          // クラフト作成数
+          let craftTotal = 0;
+          craftLogs.forEach((l) => {
+            if (l.title.includes(prod.name) || l.detail.includes(prod.name)) {
+              const matches = Array.from(l.title.matchAll(/×(\d+)/g));
+              if (matches.length > 0) {
+                for (const m of matches) {
+                  craftTotal += parseInt(m[1]) || 1;
+                }
+              } else {
+                craftTotal += 1;
+              }
+            }
+          });
+
+          return {
+            ...prod,
+            soldCount,
+            salesAmount,
+            craftTotal,
+          };
+        });
+
+        const filteredProducts = productStatsList.filter((p) => {
+          if (statsProductShopFilter === "sakura") return (p.shopId || "sakura") === "sakura";
+          if (statsProductShopFilter === "buon_viaggio") return p.shopId === "buon_viaggio";
+          return true;
+        });
+
+        const sortedProducts = [...filteredProducts].sort((a, b) => {
+          if (statsProductSort === "sales") return b.salesAmount - a.salesAmount;
+          if (statsProductSort === "count") return b.soldCount - a.soldCount;
+          if (statsProductSort === "craft") return b.craftTotal - a.craftTotal;
+          if (statsProductSort === "stock") return (b.current_stock || 0) - (a.current_stock || 0);
+          return 0;
+        });
+        const maxProductSales = Math.max(...productStatsList.map((p) => p.salesAmount), 1);
+
+        // ----------------------------------------------------
+        // C. 素材別集計
+        // ----------------------------------------------------
+        const ingredientStatsList = ingredients.map((ing) => {
+          let procuredCount = 0;
+          const staffProcureMap: { [name: string]: number } = {};
+
+          inventoryLogs.forEach((l) => {
+            if (l.title.includes(`(${ing.name})`) || l.detail.includes(ing.name)) {
+              const isAdjustmentOnly =
+                l.title.includes("棚卸し") ||
+                l.detail.includes("棚卸し") ||
+                l.detail.includes("数合わせ") ||
+                (l.title.includes("手動調整") &&
+                  !l.detail.includes("クイック補充") &&
+                  !l.detail.includes("調達") &&
+                  !l.detail.includes("納品"));
+              if (isAdjustmentOnly) return;
+
+              let added = 0;
+              const quickMatch = l.detail.match(/クイック補充\s*\(\+(\d+)\)/);
+              if (quickMatch) {
+                added = parseInt(quickMatch[1], 10) || 0;
+              } else {
+                const procureMatch = l.detail.match(/\+(\d+)/);
+                if (l.title.includes("調達") || l.detail.includes("調達") || l.detail.includes("納品")) {
+                  if (procureMatch) added = parseInt(procureMatch[1], 10) || 0;
+                } else {
+                  const qtyMatch = l.detail.match(/在庫数(?:を)?\s*(\d+)\s*→\s*(\d+)/);
+                  if (qtyMatch) {
+                    const before = parseInt(qtyMatch[1], 10) || 0;
+                    const after = parseInt(qtyMatch[2], 10) || 0;
+                    if (after > before) added = after - before;
+                  }
+                }
+              }
+
+              if (added > 0) {
+                procuredCount += added;
+                const staffName = l.userName || "不明";
+                staffProcureMap[staffName] = (staffProcureMap[staffName] || 0) + added;
+              }
+            }
+          });
+
+          let topProvider: { name: string; count: number } | null = null;
+          for (const [name, count] of Object.entries(staffProcureMap)) {
+            if (!topProvider || count > topProvider.count) {
+              topProvider = { name, count };
+            }
+          }
+
+          // 推定消費数
+          let estimatedConsumed = 0;
+          products.forEach((prod) => {
+            const req = prod.recipe?.find(
+              (r) => r.ingredient_id === ing.id || r.ingredient_name === ing.name
+            );
+            if (req && req.quantity > 0) {
+              const prodStat = productStatsList.find((p) => p.id === prod.id);
+              const craftTotal = prodStat?.craftTotal || 0;
+              estimatedConsumed += craftTotal * req.quantity;
+            }
+          });
+
+          return {
+            ...ing,
+            procuredCount,
+            estimatedConsumed,
+            topProvider,
+          };
+        });
+
+        const sortedIngredients = [...ingredientStatsList].sort((a, b) => {
+          if (statsIngredientSort === "procured") return b.procuredCount - a.procuredCount;
+          if (statsIngredientSort === "stock") return (b.current_stock || 0) - (a.current_stock || 0);
+          if (statsIngredientSort === "name") return a.name.localeCompare(b.name, "ja");
+          return 0;
+        });
+
+        // ----------------------------------------------------
+        // D. 店舗別集計
+        // ----------------------------------------------------
+        const totalStoreSales = sakuraTotalAmount + buonTotalAmount;
+        const sakuraShare = totalStoreSales > 0 ? Math.round((sakuraTotalAmount / totalStoreSales) * 100) : 50;
+        const buonShare = totalStoreSales > 0 ? 100 - sakuraShare : 50;
+
+        // 順位バッジヘルパー
+        const getRankBadge = (idx: number) => {
+          if (idx === 0)
+            return (
+              <span className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs font-black flex items-center justify-center">
+                🥇
+              </span>
+            );
+          if (idx === 1)
+            return (
+              <span className="w-6 h-6 rounded-full bg-stone-300/20 text-stone-200 border border-stone-400/40 text-xs font-black flex items-center justify-center">
+                🥈
+              </span>
+            );
+          if (idx === 2)
+            return (
+              <span className="w-6 h-6 rounded-full bg-amber-700/20 text-amber-600 border border-amber-700/40 text-xs font-black flex items-center justify-center">
+                🥉
+              </span>
+            );
+          return (
+            <span className="w-6 h-6 rounded-full bg-stone-800 text-stone-400 border border-stone-700 text-xs font-bold flex items-center justify-center">
+              {idx + 1}
+            </span>
+          );
+        };
+
+        // 期間ラベルの表示名
+        const getPeriodDisplayLabel = () => {
+          if (statsPeriod === "all") return "全期間累計（全データ）";
+          if (statsPeriod === "current") return "今週（進行中・リアルタイム集計）";
+          if (statsPeriod === "last") return "先週（確定・査定週）";
+          const found = availableWeeks.find((w) => w.weekKey === statsPeriod);
+          return found ? found.weekLabel : statsPeriod;
+        };
+
+        return (
+          <div className="space-y-6">
+            {/* ヘッダー & 対象期間選択 */}
+            <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-full text-xs font-black bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                    EXECUTIVE ANALYTICS
+                  </span>
+                  <span className="text-xs text-stone-400">部門別・個別統計一覧</span>
+                </div>
+                <h2 className="text-lg font-black text-white mt-1 flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-amber-500" />
+                  詳細統計・アナリティクス
+                </h2>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  スタッフ、商品（料理）、素材、店舗それぞれの詳細な実績データを並べて分析できます
+                </p>
+              </div>
+
+              {/* 期間セレクター */}
+              <div className="flex flex-wrap items-center gap-2 bg-stone-950/80 p-2 rounded-2xl border border-stone-800">
+                <div className="flex items-center gap-1.5 px-2 text-stone-400 text-xs font-bold">
+                  <Calendar className="w-3.5 h-3.5 text-amber-500" />
+                  <span>対象期間:</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setStatsPeriod("all")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                    statsPeriod === "all"
+                      ? "bg-amber-600 text-stone-950 shadow-md scale-[1.02]"
+                      : "bg-stone-900 text-stone-300 hover:bg-stone-800 hover:text-white"
+                  }`}
+                >
+                  全期間累計
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStatsPeriod("current")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                    statsPeriod === "current"
+                      ? "bg-amber-600 text-stone-950 shadow-md scale-[1.02]"
+                      : "bg-stone-900 text-stone-300 hover:bg-stone-800 hover:text-white"
+                  }`}
+                >
+                  今週 (集計中)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStatsPeriod("last")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                    statsPeriod === "last"
+                      ? "bg-amber-600 text-stone-950 shadow-md scale-[1.02]"
+                      : "bg-stone-900 text-stone-300 hover:bg-stone-800 hover:text-white"
+                  }`}
+                >
+                  先週 (確定週)
+                </button>
+
+                <select
+                  value={statsPeriod.includes("_") ? statsPeriod : ""}
+                  onChange={(e) => {
+                    if (e.target.value) setStatsPeriod(e.target.value);
+                  }}
+                  className="bg-stone-900 border border-stone-700 text-stone-200 text-xs rounded-xl px-2.5 py-1.5 font-bold focus:outline-none focus:border-amber-500"
+                >
+                  <option value="">過去の週を選択...</option>
+                  {availableWeeks.map((w) => (
+                    <option key={w.weekKey} value={w.weekKey}>
+                      {w.weekLabel}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* 対象期間サマリーメトリクス */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="bg-stone-900/90 p-3.5 rounded-2xl border border-stone-800">
+                <div className="text-[10px] font-bold text-stone-400">期間総売上</div>
+                <div className="text-lg font-black text-amber-400 mt-0.5">
+                  {formatCurrency(totalSalesAmount)}
+                </div>
+                <div className="text-[10px] text-stone-500 mt-1">
+                  🌸 {formatCurrency(sakuraTotalAmount)} / 🍷 {formatCurrency(buonTotalAmount)}
+                </div>
+              </div>
+
+              <div className="bg-stone-900/90 p-3.5 rounded-2xl border border-stone-800">
+                <div className="text-[10px] font-bold text-stone-400">販売個数 / 伝票数</div>
+                <div className="text-lg font-black text-stone-100 mt-0.5">
+                  {totalSoldItems.toLocaleString()} <span className="text-xs text-stone-400">個</span>
+                </div>
+                <div className="text-[10px] text-stone-500 mt-1">
+                  伝票 {totalSalesCount} 件（平均 {formatCurrency(avgOrderAmount)}）
+                </div>
+              </div>
+
+              <div className="bg-stone-900/90 p-3.5 rounded-2xl border border-stone-800">
+                <div className="text-[10px] font-bold text-stone-400">店舗手元純残り ({storeRate}%)</div>
+                <div className="text-lg font-black text-emerald-400 mt-0.5">
+                  {formatCurrency(totalStoreRemaining)}
+                </div>
+                <div className="text-[10px] text-stone-500 mt-1">
+                  金庫入金分
+                </div>
+              </div>
+
+              <div className="bg-stone-900/90 p-3.5 rounded-2xl border border-stone-800">
+                <div className="text-[10px] font-bold text-stone-400">手渡しインセンティブ ({staffIncentiveRate}%)</div>
+                <div className="text-lg font-black text-stone-200 mt-0.5">
+                  {formatCurrency(totalIncentive)}
+                </div>
+                <div className="text-[10px] text-stone-500 mt-1">
+                  スタッフ即時受取
+                </div>
+              </div>
+
+              <div className="bg-stone-900/90 p-3.5 rounded-2xl border border-stone-800">
+                <div className="text-[10px] font-bold text-stone-400">クラフト仕込み作成</div>
+                <div className="text-lg font-black text-amber-300 mt-0.5">
+                  {totalCraftCount.toLocaleString()} <span className="text-xs text-stone-400">個</span>
+                </div>
+                <div className="text-[10px] text-stone-500 mt-1">
+                  ログ集計作成実績
+                </div>
+              </div>
+
+              <div className="bg-stone-900/90 p-3.5 rounded-2xl border border-stone-800">
+                <div className="text-[10px] font-bold text-stone-400">素材調達・納品</div>
+                <div className="text-lg font-black text-amber-300 mt-0.5">
+                  {totalIngredientCount.toLocaleString()} <span className="text-xs text-stone-400">個</span>
+                </div>
+                <div className="text-[10px] text-stone-500 mt-1">
+                  調整を除く納品数
+                </div>
+              </div>
+            </div>
+
+            {/* 表示切り替えサブバー */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-stone-900/90 p-3 rounded-2xl border border-stone-800">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setStatsView("all")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                    statsView === "all"
+                      ? "bg-amber-600 text-stone-950 font-black shadow-xs"
+                      : "bg-stone-950/70 text-stone-300 hover:bg-stone-800"
+                  }`}
+                >
+                  📋 すべて並べて表示
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStatsView("staff")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                    statsView === "staff"
+                      ? "bg-amber-600 text-stone-950 font-black shadow-xs"
+                      : "bg-stone-950/70 text-stone-300 hover:bg-stone-800"
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  👥 スタッフ別 統計 ({users.length}名)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStatsView("products")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                    statsView === "products"
+                      ? "bg-amber-600 text-stone-950 font-black shadow-xs"
+                      : "bg-stone-950/70 text-stone-300 hover:bg-stone-800"
+                  }`}
+                >
+                  <Utensils className="w-3.5 h-3.5" />
+                  🍱 料理・商品別 統計 ({products.length}品)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStatsView("ingredients")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                    statsView === "ingredients"
+                      ? "bg-amber-600 text-stone-950 font-black shadow-xs"
+                      : "bg-stone-950/70 text-stone-300 hover:bg-stone-800"
+                  }`}
+                >
+                  <Boxes className="w-3.5 h-3.5" />
+                  🌾 素材アイテム別 統計 ({ingredients.length}品)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStatsView("stores")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                    statsView === "stores"
+                      ? "bg-amber-600 text-stone-950 font-black shadow-xs"
+                      : "bg-stone-950/70 text-stone-300 hover:bg-stone-800"
+                  }`}
+                >
+                  <Store className="w-3.5 h-3.5" />
+                  🏪 店舗別 比較分析
+                </button>
+              </div>
+
+              <div className="text-xs text-stone-400 font-bold px-2">
+                集計対象: <span className="text-amber-400">{getPeriodDisplayLabel()}</span>
+              </div>
+            </div>
+
+            {/* ========================================================
+                セクション①: 👥 スタッフ別 統計一覧
+            ======================================================== */}
+            {(statsView === "all" || statsView === "staff") && (
+              <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-stone-800">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                      <Users className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h3 className="text-sm font-black text-white flex items-center gap-2">
+                        スタッフ別 統計一覧
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-stone-800 text-stone-300">
+                          {users.length}名
+                        </span>
+                      </h3>
+                      <p className="text-[11px] text-stone-400">
+                        個人の売上実績・料理作成数・素材調達数・店舗貢献額を一覧表示
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* スタッフソートセレクター */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] text-stone-400 font-bold">並び替え:</span>
+                    <button
+                      type="button"
+                      onClick={() => setStatsStaffSort("sales")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        statsStaffSort === "sales"
+                          ? "bg-amber-600 text-stone-950 font-black"
+                          : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                      }`}
+                    >
+                      売上順
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatsStaffSort("craft")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        statsStaffSort === "craft"
+                          ? "bg-amber-600 text-stone-950 font-black"
+                          : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                      }`}
+                    >
+                      仕込み作成数順
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatsStaffSort("ingredient")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        statsStaffSort === "ingredient"
+                          ? "bg-amber-600 text-stone-950 font-black"
+                          : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                      }`}
+                    >
+                      素材調達数順
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatsStaffSort("count")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        statsStaffSort === "count"
+                          ? "bg-amber-600 text-stone-950 font-black"
+                          : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                      }`}
+                    >
+                      伝票件数順
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatsStaffSort("remaining")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        statsStaffSort === "remaining"
+                          ? "bg-amber-600 text-stone-950 font-black"
+                          : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                      }`}
+                    >
+                      純残り貢献順
+                    </button>
+                  </div>
+                </div>
+
+                {/* スタッフテーブル */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-stone-300">
+                    <thead className="bg-stone-950/80 text-[11px] font-black text-stone-400 border-b border-stone-800">
+                      <tr>
+                        <th className="py-2.5 px-3 text-center w-10">順位</th>
+                        <th className="py-2.5 px-3">従業員名</th>
+                        <th className="py-2.5 px-3">役職</th>
+                        <th className="py-2.5 px-3 text-right">総売上金額</th>
+                        <th className="py-2.5 px-3 text-right">🌸さくら / 🍷Buon</th>
+                        <th className="py-2.5 px-3 text-center">販売件数 / 点数</th>
+                        <th className="py-2.5 px-3 text-right">客単価</th>
+                        <th className="py-2.5 px-3 text-right">料理仕込み</th>
+                        <th className="py-2.5 px-3 text-right">素材調達</th>
+                        <th className="py-2.5 px-3 text-right">値引き実績</th>
+                        <th className="py-2.5 px-3 text-right">純残り貢献 (70%)</th>
+                        <th className="py-2.5 px-3 text-right">手渡し受取 (30%)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-800/60 font-medium">
+                      {sortedStaffStats.map((staff, idx) => {
+                        const pct = Math.min(
+                          100,
+                          Math.round((staff.salesAmount / maxStaffSales) * 100)
+                        );
+                        return (
+                          <tr
+                            key={staff.userId}
+                            className="hover:bg-stone-800/40 transition-colors"
+                          >
+                            <td className="py-3 px-3 text-center font-bold">
+                              {getRankBadge(idx)}
+                            </td>
+                            <td className="py-3 px-3 font-black text-stone-100 whitespace-nowrap">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span>{staff.displayName}</span>
+                                {staff.isExecutive && (
+                                  <span className="text-[10px] text-amber-400">👑</span>
+                                )}
+                                {staff.gameId && (
+                                  <span className="text-[10px] font-mono font-bold text-amber-300 bg-amber-950/60 px-1.5 py-0.2 rounded border border-amber-600/40">
+                                    🎮 #{staff.gameId}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-stone-800 text-stone-300 border border-stone-700">
+                                {staff.roleName}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              <div className="font-black text-amber-400 text-sm">
+                                {formatCurrency(staff.salesAmount)}
+                              </div>
+                              <div className="w-24 bg-stone-800 h-1.5 rounded-full ml-auto mt-1 overflow-hidden">
+                                <div
+                                  className="bg-amber-500 h-full rounded-full"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-right text-[11px] text-stone-400 whitespace-nowrap">
+                              <div>🌸 {formatCurrency(staff.sakuraAmount)}</div>
+                              <div>🍷 {formatCurrency(staff.buonAmount)}</div>
+                            </td>
+                            <td className="py-3 px-3 text-center whitespace-nowrap">
+                              <span className="font-bold text-stone-200">
+                                {staff.salesCount} 件
+                              </span>
+                              <span className="text-stone-500 mx-1">/</span>
+                              <span className="font-bold text-amber-300">
+                                {staff.itemsSold} 個
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap text-stone-300 font-bold">
+                              {staff.salesCount > 0 ? formatCurrency(staff.avgOrder) : "—"}
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              <span
+                                className={`font-black ${
+                                  staff.craftCount > 0 ? "text-amber-300" : "text-stone-500"
+                                }`}
+                              >
+                                {staff.craftCount.toLocaleString()}
+                              </span>
+                              <span className="text-[10px] text-stone-500 ml-0.5">個</span>
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              <span
+                                className={`font-black ${
+                                  staff.ingredientCount > 0
+                                    ? "text-emerald-400"
+                                    : "text-stone-500"
+                                }`}
+                              >
+                                {staff.ingredientCount.toLocaleString()}
+                              </span>
+                              <span className="text-[10px] text-stone-500 ml-0.5">個</span>
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              {staff.discountCount > 0 ? (
+                                <div>
+                                  <span className="text-rose-400 font-bold">
+                                    -{formatCurrency(staff.discountAmount)}
+                                  </span>
+                                  <div className="text-[10px] text-stone-500">
+                                    {staff.discountCount}回
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-stone-600">—</span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap font-black text-emerald-400">
+                              {formatCurrency(staff.storeRemaining)}
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap font-black text-stone-300">
+                              {formatCurrency(staff.incentive)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ========================================================
+                セクション②: 🍱 料理・商品別 統計一覧
+            ======================================================== */}
+            {(statsView === "all" || statsView === "products") && (
+              <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-stone-800">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                      <Utensils className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h3 className="text-sm font-black text-white flex items-center gap-2">
+                        料理・商品別 統計一覧
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-stone-800 text-stone-300">
+                          {filteredProducts.length}品
+                        </span>
+                      </h3>
+                      <p className="text-[11px] text-stone-400">
+                        各料理の販売個数、売上金額、クラフト作成総数、現在庫を網羅
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* 店舗フィルター */}
+                    <div className="flex items-center gap-1 bg-stone-950/80 p-1 rounded-xl border border-stone-800">
+                      <button
+                        type="button"
+                        onClick={() => setStatsProductShopFilter("all")}
+                        className={`px-2 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                          statsProductShopFilter === "all"
+                            ? "bg-amber-600 text-stone-950 font-black"
+                            : "text-stone-400 hover:text-white"
+                        }`}
+                      >
+                        全店舗
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStatsProductShopFilter("sakura")}
+                        className={`px-2 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                          statsProductShopFilter === "sakura"
+                            ? "bg-amber-600 text-stone-950 font-black"
+                            : "text-stone-400 hover:text-white"
+                        }`}
+                      >
+                        🌸 さくら
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStatsProductShopFilter("buon_viaggio")}
+                        className={`px-2 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                          statsProductShopFilter === "buon_viaggio"
+                            ? "bg-amber-600 text-stone-950 font-black"
+                            : "text-stone-400 hover:text-white"
+                        }`}
+                      >
+                        🍷 Buon
+                      </button>
+                    </div>
+
+                    {/* 商品ソート */}
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] text-stone-400 font-bold">並び替え:</span>
+                      <button
+                        type="button"
+                        onClick={() => setStatsProductSort("sales")}
+                        className={`px-2 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                          statsProductSort === "sales"
+                            ? "bg-amber-600 text-stone-950 font-black"
+                            : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                        }`}
+                      >
+                        売上金額順
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStatsProductSort("count")}
+                        className={`px-2 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                          statsProductSort === "count"
+                            ? "bg-amber-600 text-stone-950 font-black"
+                            : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                        }`}
+                      >
+                        販売個数順
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStatsProductSort("craft")}
+                        className={`px-2 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                          statsProductSort === "craft"
+                            ? "bg-amber-600 text-stone-950 font-black"
+                            : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                        }`}
+                      >
+                        仕込み作成数順
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStatsProductSort("stock")}
+                        className={`px-2 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                          statsProductSort === "stock"
+                            ? "bg-amber-600 text-stone-950 font-black"
+                            : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                        }`}
+                      >
+                        在庫数順
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 商品テーブル */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-stone-300">
+                    <thead className="bg-stone-950/80 text-[11px] font-black text-stone-400 border-b border-stone-800">
+                      <tr>
+                        <th className="py-2.5 px-3 text-center w-10">順位</th>
+                        <th className="py-2.5 px-3">商品画像・料理名</th>
+                        <th className="py-2.5 px-3">所属店舗</th>
+                        <th className="py-2.5 px-3">カテゴリ</th>
+                        <th className="py-2.5 px-3 text-right">単価</th>
+                        <th className="py-2.5 px-3 text-right">販売個数</th>
+                        <th className="py-2.5 px-3 text-right">販売総額</th>
+                        <th className="py-2.5 px-3 text-right">仕込み作成数</th>
+                        <th className="py-2.5 px-3 text-center">現在庫数</th>
+                        <th className="py-2.5 px-3 text-right">レシピ素材数</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-800/60 font-medium">
+                      {sortedProducts.map((prod, idx) => {
+                        const pct = Math.min(
+                          100,
+                          Math.round((prod.salesAmount / maxProductSales) * 100)
+                        );
+                        const isBuon = prod.shopId === "buon_viaggio";
+                        const stock = prod.current_stock || 0;
+                        return (
+                          <tr
+                            key={prod.id}
+                            className="hover:bg-stone-800/40 transition-colors"
+                          >
+                            <td className="py-3 px-3 text-center font-bold">
+                              {getRankBadge(idx)}
+                            </td>
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-lg bg-stone-950 border border-stone-800 flex items-center justify-center overflow-hidden shrink-0">
+                                  {prod.image_url ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={prod.image_url}
+                                      alt={prod.name}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  ) : (
+                                    <Utensils className="w-4 h-4 text-stone-500" />
+                                  )}
+                                </div>
+                                <span className="font-black text-stone-100">
+                                  {prod.name}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  isBuon
+                                    ? "bg-rose-950/70 text-rose-300 border border-rose-800/60"
+                                    : "bg-amber-950/70 text-amber-300 border border-amber-800/60"
+                                }`}
+                              >
+                                {isBuon ? "🍷 Buon" : "🌸 さくら"}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-stone-400 whitespace-nowrap">
+                              {prod.category_name || "料理"}
+                            </td>
+                            <td className="py-3 px-3 text-right font-bold text-stone-200 whitespace-nowrap">
+                              {formatCurrency(prod.selling_price || 0)}
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap font-black text-stone-100">
+                              {prod.soldCount.toLocaleString()}
+                              <span className="text-[10px] text-stone-400 font-normal ml-0.5">
+                                個
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              <div className="font-black text-amber-400 text-sm">
+                                {formatCurrency(prod.salesAmount)}
+                              </div>
+                              <div className="w-20 bg-stone-800 h-1.5 rounded-full ml-auto mt-1 overflow-hidden">
+                                <div
+                                  className="bg-amber-500 h-full rounded-full"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              <span
+                                className={`font-black ${
+                                  prod.craftTotal > 0 ? "text-amber-300" : "text-stone-500"
+                                }`}
+                              >
+                                {prod.craftTotal.toLocaleString()}
+                              </span>
+                              <span className="text-[10px] text-stone-500 ml-0.5">個</span>
+                            </td>
+                            <td className="py-3 px-3 text-center whitespace-nowrap">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                                  stock === 0
+                                    ? "bg-rose-500/20 text-rose-400 border border-rose-500/40"
+                                    : stock <= 5
+                                    ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                                    : "bg-stone-800 text-stone-200 border border-stone-700"
+                                }`}
+                              >
+                                {stock.toLocaleString()} 個
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right text-stone-400 whitespace-nowrap">
+                              {prod.recipe && prod.recipe.length > 0 ? (
+                                <span className="text-[11px] text-stone-300 font-bold">
+                                  {prod.recipe.length}種
+                                </span>
+                              ) : (
+                                <span className="text-stone-600">未設定</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ========================================================
+                セクション③: 🌾 素材アイテム別 統計一覧
+            ======================================================== */}
+            {(statsView === "all" || statsView === "ingredients") && (
+              <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-stone-800">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                      <Boxes className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h3 className="text-sm font-black text-white flex items-center gap-2">
+                        素材アイテム別 統計一覧
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-stone-800 text-stone-300">
+                          {ingredients.length}品
+                        </span>
+                      </h3>
+                      <p className="text-[11px] text-stone-400">
+                        素材ごとの調達・納品累計個数、推定消費量、現在庫、主な調達スタッフ
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-stone-400 font-bold">並び替え:</span>
+                    <button
+                      type="button"
+                      onClick={() => setStatsIngredientSort("procured")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                        statsIngredientSort === "procured"
+                          ? "bg-amber-600 text-stone-950 font-black"
+                          : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                      }`}
+                    >
+                      調達数順
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatsIngredientSort("stock")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                        statsIngredientSort === "stock"
+                          ? "bg-amber-600 text-stone-950 font-black"
+                          : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                      }`}
+                    >
+                      在庫数順
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatsIngredientSort("name")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                        statsIngredientSort === "name"
+                          ? "bg-amber-600 text-stone-950 font-black"
+                          : "bg-stone-800 text-stone-300 hover:bg-stone-700"
+                      }`}
+                    >
+                      品名順
+                    </button>
+                  </div>
+                </div>
+
+                {/* 素材テーブル */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-stone-300">
+                    <thead className="bg-stone-950/80 text-[11px] font-black text-stone-400 border-b border-stone-800">
+                      <tr>
+                        <th className="py-2.5 px-3 text-center w-10">順位</th>
+                        <th className="py-2.5 px-3">素材画像・名称</th>
+                        <th className="py-2.5 px-3">カテゴリ</th>
+                        <th className="py-2.5 px-3">単位</th>
+                        <th className="py-2.5 px-3 text-right">調達・納品総数</th>
+                        <th className="py-2.5 px-3 text-right">料理消費（推定）</th>
+                        <th className="py-2.5 px-3 text-center">現在庫数</th>
+                        <th className="py-2.5 px-3 text-right">主な調達スタッフ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-800/60 font-medium">
+                      {sortedIngredients.map((ing, idx) => {
+                        const stock = ing.current_stock || 0;
+                        return (
+                          <tr
+                            key={ing.id}
+                            className="hover:bg-stone-800/40 transition-colors"
+                          >
+                            <td className="py-3 px-3 text-center font-bold">
+                              {getRankBadge(idx)}
+                            </td>
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-lg bg-stone-950 border border-stone-800 flex items-center justify-center overflow-hidden shrink-0">
+                                  {ing.image_url ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={ing.image_url}
+                                      alt={ing.name}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  ) : (
+                                    <Package className="w-4 h-4 text-stone-500" />
+                                  )}
+                                </div>
+                                <span className="font-black text-stone-100">
+                                  {ing.name}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-stone-400 whitespace-nowrap">
+                              {ing.category_name || "素材"}
+                            </td>
+                            <td className="py-3 px-3 text-stone-400 whitespace-nowrap">
+                              {ing.unit || "個"}
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              <span
+                                className={`font-black text-sm ${
+                                  ing.procuredCount > 0 ? "text-amber-400" : "text-stone-500"
+                                }`}
+                              >
+                                {ing.procuredCount.toLocaleString()}
+                              </span>
+                              <span className="text-[10px] text-stone-500 ml-0.5">
+                                {ing.unit || "個"}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              <span
+                                className={`font-bold ${
+                                  ing.estimatedConsumed > 0 ? "text-stone-200" : "text-stone-600"
+                                }`}
+                              >
+                                {ing.estimatedConsumed.toLocaleString()}
+                              </span>
+                              <span className="text-[10px] text-stone-500 ml-0.5">
+                                {ing.unit || "個"}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-center whitespace-nowrap">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                                  stock === 0
+                                    ? "bg-rose-500/20 text-rose-400 border border-rose-500/40"
+                                    : stock <= 10
+                                    ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                                    : "bg-stone-800 text-stone-200 border border-stone-700"
+                                }`}
+                              >
+                                {stock.toLocaleString()} {ing.unit || "個"}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              {ing.topProvider ? (() => {
+                                const tp = ing.topProvider as { name: string; count: number };
+                                return (
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <span className="font-bold text-amber-300">
+                                      {tp.name}
+                                    </span>
+                                    <span className="text-[11px] text-stone-400">
+                                      ({tp.count.toLocaleString()}個)
+                                    </span>
+                                  </div>
+                                );
+                              })() : (
+                                <span className="text-stone-600">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ========================================================
+                セクション④: 🏪 店舗別 比較分析（さくら vs Buon viaggio）
+            ======================================================== */}
+            {(statsView === "all" || statsView === "stores") && (
+              <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl space-y-5">
+                <div className="flex items-center gap-2 pb-3 border-b border-stone-800">
+                  <span className="p-1.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                    <Store className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-black text-white flex items-center gap-2">
+                      店舗別 実績比較分析
+                    </h3>
+                    <p className="text-[11px] text-stone-400">
+                      「和食さくら」と「Buon viaggio」の両店舗の業績を直接比較
+                    </p>
+                  </div>
+                </div>
+
+                {/* 売上シェア比率バー */}
+                <div className="bg-stone-950/70 p-4 rounded-2xl border border-stone-800">
+                  <div className="flex items-center justify-between text-xs font-black mb-2">
+                    <span className="text-amber-400 flex items-center gap-1.5">
+                      🌸 和食さくら: {sakuraShare}% ({formatCurrency(sakuraTotalAmount)})
+                    </span>
+                    <span className="text-rose-400 flex items-center gap-1.5">
+                      🍷 Buon viaggio: {buonShare}% ({formatCurrency(buonTotalAmount)})
+                    </span>
+                  </div>
+                  <div className="w-full h-3 bg-stone-800 rounded-full overflow-hidden flex">
+                    <div
+                      className="bg-amber-500 h-full transition-all duration-500"
+                      style={{ width: `${sakuraShare}%` }}
+                    />
+                    <div
+                      className="bg-rose-500 h-full transition-all duration-500"
+                      style={{ width: `${buonShare}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* 店舗カード対比 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* 和食さくら */}
+                  <div className="bg-stone-950/70 p-5 rounded-2xl border border-stone-800/80 space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-stone-800">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-2xl">🌸</span>
+                        <div>
+                          <div className="font-black text-white text-base">和食さくら</div>
+                          <span className="text-[10px] text-stone-400 font-bold">
+                            登録メニュー {products.filter((p) => (p.shopId || "sakura") === "sakura").length} 品
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-xl font-black text-amber-400">
+                        {formatCurrency(sakuraTotalAmount)}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5 text-xs">
+                      <div className="bg-stone-900/80 p-2.5 rounded-xl border border-stone-800/60">
+                        <span className="text-[10px] text-stone-400 block font-bold">販売総点数</span>
+                        <span className="text-sm font-black text-stone-100 mt-0.5 block">
+                          {sakuraItemsSold.toLocaleString()} 個
+                        </span>
+                        <span className="text-[10px] text-stone-500">伝票 {sakuraSales.length} 件</span>
+                      </div>
+
+                      <div className="bg-stone-900/80 p-2.5 rounded-xl border border-stone-800/60">
+                        <span className="text-[10px] text-stone-400 block font-bold">平均客単価</span>
+                        <span className="text-sm font-black text-stone-100 mt-0.5 block">
+                          {sakuraSales.length > 0
+                            ? formatCurrency(Math.round(sakuraTotalAmount / sakuraSales.length))
+                            : "—"}
+                        </span>
+                        <span className="text-[10px] text-stone-500">1伝票あたり</span>
+                      </div>
+
+                      <div className="bg-stone-900/80 p-2.5 rounded-xl border border-stone-800/60">
+                        <span className="text-[10px] text-stone-400 block font-bold">
+                          店舗純残り ({storeRate}%)
+                        </span>
+                        <span className="text-sm font-black text-emerald-400 mt-0.5 block">
+                          {formatCurrency(Math.round(sakuraTotalAmount * (storeRate / 100)))}
+                        </span>
+                        <span className="text-[10px] text-stone-500">金庫入金分</span>
+                      </div>
+
+                      <div className="bg-stone-900/80 p-2.5 rounded-xl border border-stone-800/60">
+                        <span className="text-[10px] text-stone-400 block font-bold">
+                          手渡し分 ({staffIncentiveRate}%)
+                        </span>
+                        <span className="text-sm font-black text-stone-300 mt-0.5 block">
+                          {formatCurrency(Math.round(sakuraTotalAmount * (staffIncentiveRate / 100)))}
+                        </span>
+                        <span className="text-[10px] text-stone-500">スタッフ受取</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Buon viaggio */}
+                  <div className="bg-stone-950/70 p-5 rounded-2xl border border-stone-800/80 space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-stone-800">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-2xl">🍷</span>
+                        <div>
+                          <div className="font-black text-white text-base">Buon viaggio</div>
+                          <span className="text-[10px] text-stone-400 font-bold">
+                            登録メニュー {products.filter((p) => p.shopId === "buon_viaggio").length} 品
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-xl font-black text-amber-400">
+                        {formatCurrency(buonTotalAmount)}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5 text-xs">
+                      <div className="bg-stone-900/80 p-2.5 rounded-xl border border-stone-800/60">
+                        <span className="text-[10px] text-stone-400 block font-bold">販売総点数</span>
+                        <span className="text-sm font-black text-stone-100 mt-0.5 block">
+                          {buonItemsSold.toLocaleString()} 個
+                        </span>
+                        <span className="text-[10px] text-stone-500">伝票 {buonSales.length} 件</span>
+                      </div>
+
+                      <div className="bg-stone-900/80 p-2.5 rounded-xl border border-stone-800/60">
+                        <span className="text-[10px] text-stone-400 block font-bold">平均客単価</span>
+                        <span className="text-sm font-black text-stone-100 mt-0.5 block">
+                          {buonSales.length > 0
+                            ? formatCurrency(Math.round(buonTotalAmount / buonSales.length))
+                            : "—"}
+                        </span>
+                        <span className="text-[10px] text-stone-500">1伝票あたり</span>
+                      </div>
+
+                      <div className="bg-stone-900/80 p-2.5 rounded-xl border border-stone-800/60">
+                        <span className="text-[10px] text-stone-400 block font-bold">
+                          店舗純残り ({storeRate}%)
+                        </span>
+                        <span className="text-sm font-black text-emerald-400 mt-0.5 block">
+                          {formatCurrency(Math.round(buonTotalAmount * (storeRate / 100)))}
+                        </span>
+                        <span className="text-[10px] text-stone-500">金庫入金分</span>
+                      </div>
+
+                      <div className="bg-stone-900/80 p-2.5 rounded-xl border border-stone-800/60">
+                        <span className="text-[10px] text-stone-400 block font-bold">
+                          手渡し分 ({staffIncentiveRate}%)
+                        </span>
+                        <span className="text-sm font-black text-stone-300 mt-0.5 block">
+                          {formatCurrency(Math.round(buonTotalAmount * (staffIncentiveRate / 100)))}
+                        </span>
+                        <span className="text-[10px] text-stone-500">スタッフ受取</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ========================================================
+          タブ1: 👥 従業員 & PASS管理
+      ======================================================== */}
+      {activeTab === "users" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* 左側: 従業員新規追加フォーム */}
+          <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl h-fit text-stone-100">
+            <h2 className="text-sm font-black text-white flex items-center gap-2 mb-1">
+              <UserPlus className="w-4 h-4 text-amber-500" />
+              従業員の新規追加
+            </h2>
+            <p className="text-xs text-stone-400 mb-4">
+              名前・ログインPASS・役職（ロール）を設定して従業員を登録します
+            </p>
+
+            <form onSubmit={handleAddUser} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  ログイン名 (英数字・小文字):
+                </label>
+                <input
+                  type="text"
+                  placeholder="例: taro, sora, ken"
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs focus:ring-2 focus:ring-amber-500 font-semibold text-white placeholder:text-stone-600"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  店舗表示名 (名前):
+                </label>
+                <input
+                  type="text"
+                  placeholder="例: 太郎 (寿司職人)"
+                  value={newDisplayName}
+                  onChange={(e) => setNewDisplayName(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs focus:ring-2 focus:ring-amber-500 font-semibold text-white placeholder:text-stone-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  ログインPASS:
+                </label>
+                <input
+                  type="text"
+                  placeholder="例: 1234, 002"
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs focus:ring-2 focus:ring-amber-500 font-mono font-bold text-white placeholder:text-stone-600"
+                  required
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-stone-300 flex items-center gap-1.5">
+                    <Gamepad2 className="w-3.5 h-3.5 text-amber-400" />
+                    ゲーム内ID (FiveM ID):
+                  </label>
+                  <span className="text-[10px] text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                    🔒 幹部のみ表示
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="例: 1234, ID-5678"
+                  value={newGameId}
+                  onChange={(e) => setNewGameId(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs focus:ring-2 focus:ring-amber-500 font-mono font-bold text-white placeholder:text-stone-600"
+                />
+                <p className="text-[10px] text-stone-500 mt-0.5">
+                  ※一般スタッフ画面には非公開で、この幹部管理ページでのみ閲覧・管理されます
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  役職（ロール）の割り当て:
+                </label>
+                <select
+                  value={newUserRoleId}
+                  onChange={(e) => setNewUserRoleId(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs font-bold text-white focus:ring-2 focus:ring-amber-500"
+                >
+                  {roles.map((r) => (
+                    <option key={r.id} value={r.id} className="bg-stone-900 text-white">
+                      {r.name} {r.isExecutive ? "(幹部権限あり)" : "(一般スタッフ)"}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-stone-400 mt-1">
+                  ※役職の種類・色・幹部権限は「🏷️ 役職（ロール）設定」タブで自由に追加・編集できます
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full mt-2 py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-md shadow-amber-900/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4" />
+                従業員を追加登録する
+              </button>
+            </form>
+          </div>
+
+          {/* 右側: 従業員一覧 & PASS・役職編集リスト */}
+          <div className="lg:col-span-2 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h2 className="text-sm font-black text-white flex items-center gap-2">
+                <Users className="w-4 h-4 text-amber-500" />
+                登録済み従業員一覧 ({users.length}名)
+              </h2>
+              <span className="text-[11px] text-stone-400">
+                管理者 <strong className="text-amber-300 font-bold">kein (PASS: 001)</strong> は保護されています
+              </span>
+            </div>
+
+            {/* 並び順設定 & クイック整列バー */}
+            <div className="bg-stone-950 p-3 rounded-2xl border border-stone-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-1.5">
+                <ArrowUpDown className="w-3.5 h-3.5 text-amber-400" />
+                <span className="font-bold text-stone-300">並び順設定:</span>
+                <span className="text-[10px] text-stone-500">（解雇ロールは常に最下部に自動固定）</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleApplyQuickSort("role")}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    employeeSortMode === "role"
+                      ? "bg-amber-600 text-white shadow-xs"
+                      : "bg-stone-900 text-stone-400 hover:text-white border border-stone-800"
+                  }`}
+                  title="役職が高い順に整列して保存"
+                >
+                  👑 役職順
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApplyQuickSort("name")}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    employeeSortMode === "name"
+                      ? "bg-amber-600 text-white shadow-xs"
+                      : "bg-stone-900 text-stone-400 hover:text-white border border-stone-800"
+                  }`}
+                  title="五十音順に整列して保存"
+                >
+                  🔤 名前順
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApplyQuickSort("date")}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    employeeSortMode === "date"
+                      ? "bg-amber-600 text-white shadow-xs"
+                      : "bg-stone-900 text-stone-400 hover:text-white border border-stone-800"
+                  }`}
+                  title="登録が新しい順に整列して保存"
+                >
+                  📅 登録順
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {(() => {
+                const dismissedCount = sortedUsers.filter(isDismissedUser).length;
+                return sortedUsers.map((u, idx) => {
+                  const isKein = u.username.toLowerCase() === "kein";
+                  const isEditing = editingUserId === u.id;
+                  const isShowPass = showPassMap[u.id] || false;
+                  const userRoleObj = roles.find((r) => r.id === u.roleId);
+                  const isDismissed = isDismissedUser(u);
+                  const isFirstDismissed = isDismissed && (idx === 0 || !isDismissedUser(sortedUsers[idx - 1]));
+                  const badgeColor = isDismissed ? "rose" : (userRoleObj?.color || (u.role === "executive" ? "amber" : "stone"));
+
+                  return (
+                    <React.Fragment key={u.id}>
+                      {/* 解雇ロールのスタッフ区切りバナー */}
+                      {isFirstDismissed && (
+                        <div className="py-2.5 px-4 rounded-2xl bg-rose-950/40 border border-rose-900/60 text-rose-300 text-xs font-bold flex items-center justify-between mt-4 shadow-sm">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">⛔</span>
+                            <div>
+                              <span className="font-extrabold text-rose-200">解雇・退職ロールのスタッフ ({dismissedCount}名)</span>
+                              <span className="text-[10px] text-rose-400/80 block">※解雇ロールの人は自動的に一覧の最下部に移動・固定表示されます</span>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded bg-rose-900/60 border border-rose-700/60 text-rose-200">
+                            最下部固定
+                          </span>
+                        </div>
+                      )}
+
+                      <div
+                        className={`p-4 rounded-2xl border transition-all shadow-md ${
+                          isKein
+                            ? "border-amber-500/50 bg-stone-900"
+                            : isDismissed
+                            ? "border-rose-950/60 bg-stone-950/70 opacity-75"
+                            : "bg-stone-900/90 border-stone-800"
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          {/* ユーザー情報 ＆ 上下移動ボタン */}
+                          <div className="flex items-center gap-2.5">
+                            {/* 順序入れ替えボタン (⬆️ / ⬇️) */}
+                            <div className="flex flex-col gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleMoveUser(u.id, "up")}
+                                disabled={idx === 0 || isFirstDismissed}
+                                className="p-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                                title="並び順を1つ上へ"
+                              >
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleMoveUser(u.id, "down")}
+                                disabled={
+                                  idx === sortedUsers.length - 1 ||
+                                  (!isDismissed && isDismissedUser(sortedUsers[idx + 1]))
+                                }
+                                className="p-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                                title="並び順を1つ下へ"
+                              >
+                                <ArrowDown className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            <div
+                              className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm shrink-0 ${
+                                isDismissed
+                                  ? "bg-rose-950 text-rose-400 border border-rose-800/40"
+                                  : u.role === "executive"
+                                  ? "bg-amber-950 text-amber-400 border border-amber-600/40"
+                                  : "bg-stone-800 text-stone-300 border border-stone-700"
+                              }`}
+                            >
+                              {isDismissed ? "⛔" : u.role === "executive" ? "👑" : "👤"}
+                            </div>
+
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`font-bold text-sm ${isDismissed ? "text-stone-400 line-through" : "text-white"}`}>
+                                  {u.displayName}
+                                </span>
+                                {/* カスタム役職バッジ */}
+                                <span
+                                  className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                                    isDismissed
+                                      ? "bg-rose-950 text-rose-300 border-rose-600/50"
+                                      : getRoleBadgeClass(badgeColor, u.role === "executive")
+                                  }`}
+                                >
+                                  {isDismissed
+                                    ? `⛔ ${u.roleName || userRoleObj?.name || "解雇"}`
+                                    : u.roleName || userRoleObj?.name || (u.role === "executive" ? "幹部" : "スタッフ")}
+                                </span>
+                                {u.role === "executive" && !isDismissed && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-950/60 text-amber-400 border border-amber-500/30">
+                                    幹部権限
+                                  </span>
+                                )}
+                                {isKein && (
+                                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500 text-stone-950 font-bold">
+                                    店主 (最高管理者)
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 flex-wrap mt-1">
+                                <span className="text-[11px] text-stone-400 font-mono">
+                                  ID: @{u.username}
+                                </span>
+                                {/* ゲーム内IDバッジ (幹部のみ表示) */}
+                                <div className="flex items-center gap-1">
+                                  <span
+                                    className={`inline-flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded-lg border ${
+                                      u.gameId
+                                        ? "bg-amber-950/60 text-amber-300 border-amber-600/50 font-bold"
+                                        : "bg-stone-950/60 text-stone-500 border-stone-800"
+                                    }`}
+                                  >
+                                    <Gamepad2 className="w-3 h-3 text-amber-400 shrink-0" />
+                                    <span>ゲーム内ID:</span>
+                                    <strong className={u.gameId ? "text-amber-200" : "text-stone-500 font-normal"}>
+                                      {u.gameId ? `#${u.gameId}` : "未設定"}
+                                    </strong>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingGameIdUserId(u.id);
+                                      setEditGameIdInput(u.gameId || "");
+                                    }}
+                                    className="p-1 rounded-md text-stone-400 hover:text-white hover:bg-stone-800 text-[10px] font-bold transition-colors cursor-pointer"
+                                    title="ゲーム内IDを編集"
+                                  >
+                                    <Edit2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* PASS表示 & 役職変更 UI */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5 bg-stone-950 px-3 py-1.5 rounded-xl border border-stone-800">
+                              <Key className="w-3.5 h-3.5 text-stone-400" />
+                              <span className="text-[11px] text-stone-400 font-semibold">PASS:</span>
+                              <span className="text-xs font-mono font-black text-amber-300 tracking-wider">
+                                {isShowPass ? u.pass : "••••"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setShowPassMap((prev) => ({ ...prev, [u.id]: !prev[u.id] }))
+                                }
+                                className="text-stone-400 hover:text-white p-0.5 cursor-pointer"
+                                title={isShowPass ? "隠す" : "表示する"}
+                              >
+                                {isShowPass ? (
+                                  <EyeOff className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Eye className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+
+                            {/* PASS編集ボタン */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingUserId(u.id);
+                                setEditPassInput(u.pass);
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold border border-stone-700 transition-colors cursor-pointer"
+                            >
+                              PASS変更
+                            </button>
+
+                            {/* 役職（ロール）変更ドロップダウン */}
+                            {!isKein ? (
+                              <div className="flex items-center gap-1">
+                                <span className="text-[10px] text-stone-400 font-bold">役職:</span>
+                                <select
+                                  value={u.roleId || (u.role === "executive" ? "role-manager" : "role-staff")}
+                                  onChange={(e) => updateUserCustomRole(u.id, e.target.value)}
+                                  className="px-2 py-1.5 rounded-xl text-xs font-bold bg-stone-950 border border-stone-700 text-stone-200 hover:border-amber-500 transition-colors cursor-pointer"
+                                  title="役職を変更する"
+                                >
+                                  {roles.map((r) => (
+                                    <option key={r.id} value={r.id} className="bg-stone-900 text-white">
+                                      {r.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] font-bold text-amber-400 px-2.5 py-1 bg-amber-950/60 rounded-xl border border-amber-500/40">
+                                役職固定 (店主)
+                              </span>
+                            )}
+
+                            {/* 削除ボタン (keinは削除不可) */}
+                            {!isKein && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (confirm(`本当に「${u.displayName}」を削除しますか？`)) {
+                                    deleteUser(u.id);
+                                  }
+                                }}
+                                className="p-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 text-rose-400 border border-rose-800 transition-colors ml-1 cursor-pointer"
+                                title="従業員を削除"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* インライン PASS 編集フォーム */}
+                        {isEditing && (
+                          <div className="mt-3 pt-3 border-t border-stone-800 flex items-center gap-2">
+                            <span className="text-xs font-bold text-stone-300 shrink-0">新しいPASS:</span>
+                            <input
+                              type="text"
+                              value={editPassInput}
+                              onChange={(e) => setEditPassInput(e.target.value)}
+                              className="px-3 py-1 bg-stone-950 rounded-lg border border-stone-700 text-xs font-mono font-bold w-36 text-white focus:border-amber-500"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSavePass(u.id)}
+                              className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs cursor-pointer"
+                            >
+                              保存
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingUserId(null)}
+                              className="px-3 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-400 text-xs cursor-pointer"
+                            >
+                              キャンセル
+                            </button>
+                          </div>
+                        )}
+
+                        {/* インライン ゲーム内ID 編集フォーム */}
+                        {editingGameIdUserId === u.id && (
+                          <div className="mt-3 pt-3 border-t border-stone-800 flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold text-amber-400 flex items-center gap-1 shrink-0">
+                              <Gamepad2 className="w-3.5 h-3.5" />
+                              ゲーム内ID:
+                            </span>
+                            <input
+                              type="text"
+                              placeholder="例: 1234, ID-5678"
+                              value={editGameIdInput}
+                              onChange={(e) => setEditGameIdInput(e.target.value)}
+                              className="px-3 py-1 bg-stone-950 rounded-lg border border-stone-700 text-xs font-mono font-bold w-40 text-white focus:border-amber-500"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSaveGameId(u.id)}
+                              className="px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-stone-950 font-black text-xs shadow-xs cursor-pointer"
+                            >
+                              保存
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingGameIdUserId(null)}
+                              className="px-3 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-400 text-xs cursor-pointer"
+                            >
+                              キャンセル
+                            </button>
+                            <span className="text-[10px] text-stone-500 ml-2">
+                              ※空欄で保存すると未設定になります
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </React.Fragment>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================
+          タブ: 🏷️ 役職（ロール）設定
+      ======================================================== */}
+      {activeTab === "roles" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* 左側: 新規役職の作成フォーム */}
+          <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl h-fit space-y-4 text-stone-100">
+            <div>
+              <h2 className="text-sm font-black text-white flex items-center gap-2">
+                <Tag className="w-4 h-4 text-purple-400" />
+                新しい役職（ロール）を作成
+              </h2>
+              <p className="text-xs text-stone-400 mt-0.5">
+                店主、店長、料理長、ホール主任など、お店独自の役職を自由に命名・設定できます
+              </p>
+            </div>
+
+            <form onSubmit={handleCreateRole} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  役職名:
+                </label>
+                <input
+                  type="text"
+                  placeholder="例: 副店長、板長、ホールリーダー、見習い"
+                  value={newRoleName}
+                  onChange={(e) => setNewRoleName(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs font-bold text-white placeholder:text-stone-600 focus:ring-2 focus:ring-purple-500"
+                  required
+                />
+              </div>
+
+              {/* カラー選択 */}
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  バッジカラー:
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: "amber", label: "琥珀/金", bg: "bg-amber-950 text-amber-300 border-amber-700" },
+                    { id: "rose", label: "桜/赤", bg: "bg-rose-950 text-rose-300 border-rose-700" },
+                    { id: "emerald", label: "翡翠/緑", bg: "bg-emerald-950 text-emerald-300 border-emerald-700" },
+                    { id: "blue", label: "藍/青", bg: "bg-blue-950 text-blue-300 border-blue-700" },
+                    { id: "purple", label: "紫", bg: "bg-purple-950 text-purple-300 border-purple-700" },
+                    { id: "stone", label: "墨/灰", bg: "bg-stone-800 text-stone-300 border-stone-600" },
+                  ].map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setNewRoleColor(c.id)}
+                      className={`p-2 rounded-xl text-xs font-bold border transition-all text-center cursor-pointer ${c.bg} ${
+                        newRoleColor === c.id ? "ring-2 ring-purple-500 ring-offset-1 ring-offset-stone-900 scale-105" : "opacity-75 hover:opacity-100"
+                      }`}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 幹部画面アクセス権限チェック */}
+              <div className="p-3 bg-amber-950/30 rounded-xl border border-amber-500/30">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newRoleIsExec}
+                    onChange={(e) => setNewRoleIsExec(e.target.checked)}
+                    className="mt-0.5 rounded text-amber-500 focus:ring-amber-500 w-4 h-4 bg-stone-950 border-stone-700"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-amber-300 block">
+                      幹部専用コンソールへのアクセスを許可する
+                    </span>
+                    <span className="text-[11px] text-stone-400">
+                      ONにすると、この役職のスタッフは従業員管理や価格設定などの幹部画面に入れます。
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              {/* 週次基本手当入力 */}
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  週次基本手当 (円):
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-stone-500 font-bold text-xs">¥</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1000"
+                    placeholder="20000"
+                    value={newRoleBaseAllowance}
+                    onChange={(e) => setNewRoleBaseAllowance(parseInt(e.target.value) || 0)}
+                    className="w-full pl-7 pr-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs font-bold text-white focus:ring-2 focus:ring-purple-500"
+                    required
+                  />
+                </div>
+                <span className="text-[10px] text-stone-400 mt-0.5 block">
+                  この役職のスタッフに毎週支給する基礎手当額（ボーナス試算時に自動反映）
+                </span>
+              </div>
+
+              {/* 説明・備考メモ */}
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  説明・職務メモ (任意):
+                </label>
+                <input
+                  type="text"
+                  placeholder="例: 店舗運営全般、仕込みと在庫管理など"
+                  value={newRoleDesc}
+                  onChange={(e) => setNewRoleDesc(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs text-white placeholder:text-stone-600 focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-black shadow-md shadow-purple-900/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                役職を作成する
+              </button>
+            </form>
+          </div>
+
+          {/* 右側: 登録済み役職一覧 */}
+          <div className="lg:col-span-2 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-black text-white flex items-center gap-2">
+                  <Palette className="w-4 h-4 text-purple-400" />
+                  設定済み役職（ロール）一覧 ({roles.length}種)
+                </h2>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  役職名や権限の変更、不要な役職の削除を行えます
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {roles.map((role) => {
+                const isEditing = editingRoleId === role.id;
+                const assignedUsers = users.filter((u) => u.roleId === role.id);
+
+                return (
+                  <div
+                    key={role.id}
+                    className="bg-stone-900/90 p-4 rounded-2xl border border-stone-800 shadow-md space-y-3 text-stone-100"
+                  >
+                    {!isEditing ? (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={`px-3 py-1 rounded-xl text-xs font-black border ${getRoleBadgeClass(
+                              role.color,
+                              role.isExecutive
+                            )}`}
+                          >
+                            {role.name}
+                          </span>
+
+                          <div>
+                            <div className="flex items-center gap-2">
+                              {role.isExecutive ? (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950/80 text-amber-300 border border-amber-600/40">
+                                  👑 幹部権限あり
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-stone-800 text-stone-300 border border-stone-700">
+                                  一般スタッフ権限
+                                </span>
+                              )}
+                              <span className="text-[11px] text-stone-400 font-bold">
+                                所属: {assignedUsers.length}名
+                              </span>
+                              <span className="text-[11px] font-bold text-amber-300 bg-amber-950/80 border border-amber-500/40 px-2.5 py-0.5 rounded-full">
+                                💰 週次基本手当: ¥{(role.baseAllowance ?? 20000).toLocaleString()}
+                              </span>
+                            </div>
+                            {role.description && (
+                              <p className="text-xs text-stone-400 mt-1">{role.description}</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* アクションボタン */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleStartEditRole(role)}
+                            className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold border border-stone-700 transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit className="w-3.5 h-3.5" /> 変更
+                          </button>
+                          {!role.isDefault && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRole(role)}
+                              className="p-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 text-rose-400 border border-rose-800 transition-colors cursor-pointer"
+                              title="役職を削除"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      /* 役職のインライン編集フォーム */
+                      <div className="p-4 bg-purple-950/40 rounded-xl border border-purple-500/40 space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-bold text-stone-300 mb-1">役職名:</label>
+                            <input
+                              type="text"
+                              value={editRoleName}
+                              onChange={(e) => setEditRoleName(e.target.value)}
+                              className="w-full px-3 py-1.5 bg-stone-950 rounded-lg border border-stone-700 text-xs font-bold text-white focus:border-purple-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-stone-300 mb-1">バッジカラー:</label>
+                            <select
+                              value={editRoleColor}
+                              onChange={(e) => setEditRoleColor(e.target.value)}
+                              className="w-full px-3 py-1.5 bg-stone-950 rounded-lg border border-stone-700 text-xs font-bold text-white focus:border-purple-500"
+                            >
+                              <option value="amber">琥珀/金 (amber)</option>
+                              <option value="rose">桜/赤 (rose)</option>
+                              <option value="emerald">翡翠/緑 (emerald)</option>
+                              <option value="blue">藍/青 (blue)</option>
+                              <option value="purple">紫 (purple)</option>
+                              <option value="stone">墨/灰 (stone)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* 週次基本手当の編集 */}
+                        <div>
+                          <label className="block text-xs font-bold text-stone-300 mb-1">
+                            週次基本手当 (円):
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1000"
+                            value={editRoleBaseAllowance}
+                            onChange={(e) => setEditRoleBaseAllowance(parseInt(e.target.value) || 0)}
+                            className="w-full px-3 py-1.5 bg-stone-950 rounded-lg border border-stone-700 text-xs font-bold text-white focus:border-purple-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={editRoleIsExec}
+                              onChange={(e) => setEditRoleIsExec(e.target.checked)}
+                              className="rounded text-amber-500 focus:ring-amber-500 w-4 h-4 bg-stone-950 border-stone-700"
+                            />
+                            <span className="text-xs font-bold text-amber-300">
+                              幹部専用コンソールへのアクセスを許可する
+                            </span>
+                          </label>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-stone-300 mb-1">説明・職務メモ:</label>
+                          <input
+                            type="text"
+                            value={editRoleDesc}
+                            onChange={(e) => setEditRoleDesc(e.target.value)}
+                            className="w-full px-3 py-1.5 bg-stone-950 rounded-lg border border-stone-700 text-xs text-white"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingRoleId(null)}
+                            className="px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold cursor-pointer"
+                          >
+                            キャンセル
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveRoleEdit(role.id)}
+                            className="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-black shadow-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <Save className="w-3.5 h-3.5" /> 変更を保存
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================
+          タブ: 💰 ボーナス査定 & 支給管理（週次 日曜〜土曜締め）
+      ======================================================== */}
+      {/* ========================================================
+          タブ: 💰 ボーナス査定 & 支給管理（週次 日曜〜土曜締め）
+      ======================================================== */}
+      {activeTab === "bonus" && (
+        <div className="space-y-5">
+          {/* 🌟 サブタブ切り替えバー（画像1のタブラベル形式） */}
+          <div className="flex flex-wrap items-center gap-2 p-1.5 bg-stone-900 rounded-2xl border border-stone-800">
+            <button
+              type="button"
+              onClick={() => setBonusSubTab("assessment")}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+                bonusSubTab === "assessment"
+                  ? "bg-amber-600 text-stone-950 shadow-md scale-[1.02]"
+                  : "text-stone-300 hover:text-white hover:bg-stone-800 border border-transparent"
+              }`}
+            >
+              <Calculator className="w-4 h-4" />
+              📋 スタッフ別査定・決定 ({currentWeeklySummary.staffStats.length}名)
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setBonusSubTab("payout")}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+                bonusSubTab === "payout"
+                  ? "bg-amber-600 text-stone-950 shadow-md scale-[1.02]"
+                  : "text-stone-300 hover:text-white hover:bg-stone-800 border border-transparent"
+              }`}
+            >
+              <Landmark className="w-4 h-4" />
+              💳 支給・支払い＆金庫管理
+              {currentWeeklySummary.totalRemainingDuePayout > 0 && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/50 font-mono font-black">
+                  要手渡し {formatCurrency(currentWeeklySummary.totalRemainingDuePayout)}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setBonusSubTab("settings")}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+                bonusSubTab === "settings"
+                  ? "bg-amber-600 text-stone-950 shadow-md scale-[1.02]"
+                  : "text-stone-300 hover:text-white hover:bg-stone-800 border border-transparent"
+              }`}
+            >
+              <Sliders className="w-4 h-4" />
+              ⚙️ 査定ルール＆各種手当設定
+            </button>
+          </div>
+
+          {/* ========================================================
+              サブタブ 1: 📋 スタッフ別査定・決定 (assessment)
+          ======================================================== */}
+          {bonusSubTab === "assessment" && (
+            <div className="space-y-4">
+              {/* ① 週選択バー & 確定ステータス（査定・決定タブのみに表示） */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-stone-900 text-white p-4 sm:p-5 rounded-3xl shadow-md border border-stone-800">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-black shrink-0">
+                    <Calendar className="w-5 h-5 sm:w-6 sm:h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-stone-400 block">
+                        集計対象週（日曜00:00 〜 土曜23:59 締め）
+                      </span>
+                      {currentWeeklySummary.isFinalized ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-500/50">
+                          <CheckCheck className="w-3 h-3" />
+                          確定済み
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-950/80 text-amber-300 border border-amber-500/50">
+                          <FileText className="w-3 h-3" />
+                          未確定（査定中）
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      {/* 今週 / 先週 クイック切替ボタン */}
+                      <div className="flex items-center bg-stone-950 rounded-xl p-0.5 border border-stone-800">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedWeekKey(availableWeeks[0]?.weekKey)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            selectedWeekKey === availableWeeks[0]?.weekKey
+                              ? "bg-amber-600 text-stone-950 font-black shadow-xs"
+                              : "text-stone-400 hover:text-white"
+                          }`}
+                        >
+                          🔥 今週 (集計中)
+                        </button>
+                        {availableWeeks[1] && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedWeekKey(availableWeeks[1]?.weekKey)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              selectedWeekKey === availableWeeks[1]?.weekKey
+                                ? "bg-amber-600 text-stone-950 font-black shadow-xs"
+                                : "text-stone-400 hover:text-white"
+                            }`}
+                          >
+                            📋 先週 (締め済)
+                          </button>
+                        )}
+                      </div>
+
+                      <select
+                        value={selectedWeekKey}
+                        onChange={(e) => setSelectedWeekKey(e.target.value)}
+                        className="bg-stone-800 hover:bg-stone-750 text-white text-xs font-bold px-3 py-1.5 rounded-xl border border-stone-700 focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                      >
+                        {availableWeeks.map((w, idx) => (
+                          <option key={w.weekKey} value={w.weekKey}>
+                            {w.weekLabel} {idx === 0 ? "（今週・集計中）" : idx === 1 ? "（先週・締め済）" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 確定アクションボタン */}
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  {currentWeeklySummary.isFinalized ? (
+                    <div className="flex items-center gap-3">
+                      <div className="text-right text-[11px] text-stone-300 hidden md:block">
+                        <div>確定者: <strong className="text-white">{currentWeeklySummary.finalizedBy}</strong></div>
+                        <div className="text-[10px] text-stone-400">
+                          {currentWeeklySummary.finalizedAt &&
+                            new Date(currentWeeklySummary.finalizedAt).toLocaleString("ja-JP", {
+                              month: "numeric",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleUnfinalizeWeek}
+                        className="px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-750 text-stone-300 hover:text-white text-xs font-bold border border-stone-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        確定を解除して再編集
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleFinalizeWeek}
+                      className="px-5 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-500 text-stone-950 text-xs font-black shadow-md flex items-center gap-2 transition-all hover:scale-[1.02] cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      この週のボーナスを最終確定する
+                    </button>
+                  )}
+                </div>
+              </div>
+              {/* クイック操作バー */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-stone-900 p-4 rounded-2xl border border-stone-800 shadow-md">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-amber-500" />
+                  <div>
+                    <h3 className="text-sm font-black text-white">
+                      【売上ランキング順】スタッフ別査定 &amp; ボーナス決定 ({currentWeeklySummary.staffStats.length}名)
+                    </h3>
+                    <p className="text-[11px] text-stone-400 mt-0.5">
+                      各スタッフの実績を確認し、推奨額の適用または金額を調整して保存してください
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleApplyAllRecommended}
+                    className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-750 text-stone-200 text-xs font-bold border border-stone-700 shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                    title="現在の査定ルールに基づく推奨金額を一括セット"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    推奨額を一括反映
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetAndReapplyAllBonuses}
+                    className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-750 text-amber-300 text-xs font-bold border border-amber-600/40 shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                    title="全スタッフの入力をやり直して最新推奨額でリセット"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                    推奨額でやり直す
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveAllStaffBonuses}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 text-xs font-black shadow-md flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    全員分を一括保存
+                  </button>
+                </div>
+              </div>
+
+              {/* スタッフ別コンパクトカード一覧（縦幅を半分に圧縮） */}
+              {[...currentWeeklySummary.staffStats]
+                .sort((a, b) => {
+                  if (b.salesAmount !== a.salesAmount) {
+                    return b.salesAmount - a.salesAmount; // 売上高 降順
+                  }
+                  return b.craftItemsCount - a.craftItemsCount;
+                })
+                .map((stat, rankIdx) => {
+                  const recommended = calculateRecommendedWeeklyBonus(stat);
+                  const currentInput = getStaffBonusInput(stat.userId, stat.bonusAmount);
+                  const currentNote = getStaffBonusNote(stat.userId, stat.bonusNote);
+                  const isSaved = saveSuccessMap[stat.userId] || false;
+                  const isExpandedSales = expandedSalesUserId === stat.userId;
+                  const hasPastUnpaid = stat.previousUnpaidBonusTotal > 0;
+
+                  return (
+                    <div
+                      key={stat.userId}
+                      className="bg-stone-900/80 rounded-2xl border border-stone-800 p-3.5 sm:p-4 shadow-md space-y-2.5 text-stone-200"
+                    >
+                      {/* ① ヘッダー（1行でスッキリ整列） */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-stone-800/80">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded bg-stone-800 border border-stone-700 text-amber-300">
+                            {rankIdx === 0 ? "🥇 1位" : rankIdx === 1 ? "🥈 2位" : rankIdx === 2 ? "🥉 3位" : `${rankIdx + 1}位`}
+                          </span>
+                          <div className="w-6 h-6 rounded-lg bg-stone-800 flex items-center justify-center text-xs shrink-0">
+                            {stat.role === "executive" ? "👑" : "👤"}
+                          </div>
+                          <h3 className="font-bold text-sm text-white flex items-center gap-1.5 flex-wrap">
+                            {stat.displayName}
+                            <span className="text-[10px] font-normal px-2 py-0.2 rounded-full bg-stone-800 text-stone-400 border border-stone-700">
+                              {stat.roleName || (stat.role === "executive" ? "幹部" : "スタッフ")}
+                            </span>
+                            <span className="text-[11px] text-stone-500 font-mono">@{stat.username}</span>
+                            {stat.gameId && (
+                              <span className="text-[10px] font-mono font-bold text-amber-300 bg-amber-950/60 px-1.5 py-0.2 rounded border border-amber-600/40">
+                                🎮 #{stat.gameId}
+                              </span>
+                            )}
+                          </h3>
+                        </div>
+
+                        {/* ヘッダー右側: 手渡し残額サマリー */}
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-stone-400">手渡す残額:</span>
+                            <span className={`text-sm sm:text-base font-black font-mono ${stat.remainingDueAmount === 0 ? "text-emerald-400" : "text-amber-300"}`}>
+                              {stat.remainingDueAmount === 0 ? "¥0 (精算済)" : formatCurrency(stat.remainingDueAmount)}
+                            </span>
+                          </div>
+                          {stat.remainingDueAmount === 0 ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 flex items-center gap-1">
+                              <CheckCheck className="w-3 h-3" /> 完了
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950/60 border border-amber-500/40 text-amber-300 flex items-center gap-1">
+                              <Clock className="w-3 h-3" /> 要手渡し
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* ② 2カラムメインエリア */}
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+                        
+                        {/* === 左カラム: 実績・売上内訳 (5/12 幅) === */}
+                        <div className="lg:col-span-5 space-y-2">
+                          <div className="bg-stone-950/90 rounded-xl border border-stone-800/80 p-2.5 text-xs">
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+                              <div className="flex items-center justify-between">
+                                <span className="text-stone-400">総売上 (100%):</span>
+                                <span className="font-mono font-bold text-white" title={`伝票${stat.salesCount}件 / ${stat.itemsSold}個`}>
+                                  {formatCurrency(stat.salesAmount)}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-stone-400">手渡済 ({staffIncentiveRate}%):</span>
+                                <span className="font-mono font-bold text-stone-300">{formatCurrency(stat.incentive30)}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-amber-400/90 font-medium">店純残 ({storeRate}%):</span>
+                                <span className="font-mono font-bold text-amber-300">{formatCurrency(stat.storeRemaining70)}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-stone-400">仕込み:</span>
+                                <span className="font-mono text-stone-200">{stat.craftItemsCount}品</span>
+                              </div>
+                              <div className="flex items-center justify-between col-span-2 pt-1 border-t border-stone-800/60">
+                                <span className="text-stone-400">素材調達:</span>
+                                <span className="font-mono text-stone-200">
+                                  {stat.ingredientItemsCount.toLocaleString()}個
+                                  <span className="text-[10px] text-stone-500 ml-1">(¥{ingredientRewardRate}/個)</span>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 伝票明細展開トグル（重複ボタン削除） */}
+                          <button
+                            type="button"
+                            onClick={() => setExpandedSalesUserId(isExpandedSales ? null : stat.userId)}
+                            className="w-full py-1 px-2.5 rounded-lg bg-stone-950 hover:bg-stone-900 border border-stone-800 text-[11px] text-stone-400 hover:text-stone-200 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <FileText className="w-3 h-3 text-stone-400" />
+                              <span>売上伝票明細 ({stat.weekSales.length}件)</span>
+                            </span>
+                            <span className="text-[10px] text-amber-400 font-bold">{isExpandedSales ? "閉じる ▲" : "内訳確認 ▼"}</span>
+                          </button>
+                        </div>
+
+                        {/* === 右カラム: 査定決定・メモ・支払い管理 (7/12 幅) === */}
+                        <div className="lg:col-span-7 space-y-2">
+                          <div className="bg-stone-950/90 rounded-xl border border-stone-800/80 p-2.5 space-y-2">
+                            {/* 1行目: 決定額入力 + 推奨適用 + 保存 */}
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-stone-300 shrink-0">支給決定:</span>
+                              <div className="relative flex-1 min-w-[100px]">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-stone-400">¥</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1000"
+                                  value={currentInput}
+                                  onChange={(e) => {
+                                    const val = parseInt(e.target.value, 10) || 0;
+                                    const key = `${selectedWeekKey}_${stat.userId}`;
+                                    setWeeklyBonusInputs((prev) => ({ ...prev, [key]: val }));
+                                  }}
+                                  className="w-full pl-6 pr-2 py-1 bg-stone-900 rounded-lg border border-stone-700 font-bold text-sm text-white focus:border-amber-500 focus:outline-none font-mono"
+                                  placeholder="0"
+                                />
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleApplyRecommendedToStaff(stat)}
+                                className="px-2.5 py-1 rounded-lg bg-stone-900 hover:bg-stone-850 border border-stone-700 text-[11px] font-semibold text-amber-300 hover:text-amber-200 flex items-center gap-1 cursor-pointer shrink-0 transition-colors"
+                                title={`推奨額 ${formatCurrency(recommended)} をセット`}
+                              >
+                                <Sparkles className="w-3 h-3 text-amber-400" />
+                                推奨({formatCurrency(recommended)})
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleSaveStaffWeeklyBonus(stat.userId)}
+                                className={`px-3 py-1 rounded-lg font-bold text-xs transition-all flex items-center gap-1 shadow-sm shrink-0 cursor-pointer ${
+                                  isSaved
+                                    ? "bg-emerald-700 text-white"
+                                    : "bg-amber-600 hover:bg-amber-500 text-stone-950"
+                                }`}
+                              >
+                                {isSaved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+                                {isSaved ? "保存済" : "保存"}
+                              </button>
+                            </div>
+
+                            {/* 2行目: 推奨内訳 & 査定メモ */}
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center text-[11px] pt-1.5 border-t border-stone-800/60">
+                              <div className="md:col-span-6 text-stone-400 truncate flex items-center gap-1">
+                                <span className="text-stone-300 font-semibold shrink-0">内訳:</span>
+                                <span className="truncate">
+                                  役職 {formatCurrency(getStaffRoleAllowance(stat))} / 歩合 {formatCurrency(Math.round(stat.storeRemaining70 * (storeRemainingBonusRate / 100)))}
+                                  {storeSettings.enableCrafting && stat.craftItemsCount > 0 && ` / 仕込み ${formatCurrency(stat.craftItemsCount * craftRewardRate)}`}
+                                  {storeSettings.enableInventory && getStaffIngredientCount(stat) > 0 && ` / 素材 ${formatCurrency(getStaffIngredientCount(stat) * ingredientRewardRate)}`}
+                                </span>
+                              </div>
+                              <div className="md:col-span-6 flex items-center gap-1.5">
+                                <span className="text-stone-400 shrink-0 text-[11px]">メモ:</span>
+                                <input
+                                  type="text"
+                                  value={currentNote}
+                                  onChange={(e) => {
+                                    const key = `${selectedWeekKey}_${stat.userId}`;
+                                    setWeeklyBonusNotes((prev) => ({ ...prev, [key]: e.target.value }));
+                                  }}
+                                  placeholder="査定メモ..."
+                                  className="w-full px-2 py-0.5 bg-stone-900 rounded border border-stone-700 text-xs text-stone-200 placeholder:text-stone-600 focus:border-amber-500 focus:outline-none"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 3行目: 支払い状況 & 支払いトグル */}
+                          <div className="p-2 rounded-xl bg-stone-950/60 border border-stone-800/60 flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-stone-400 text-[11px]">今週支給:</span>
+                              <span className="font-bold text-white font-mono text-xs">{formatCurrency(stat.bonusAmount)}</span>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                stat.isPaid ? "bg-emerald-950 text-emerald-400 border border-emerald-700/40" : "bg-stone-800 text-stone-400 border border-stone-700"
+                              }`}>
+                                {stat.isPaid ? "支払済" : "未払い"}
+                              </span>
+
+                              {hasPastUnpaid && (
+                                <span className="text-[10px] text-amber-300/90 flex items-center gap-1 ml-1 bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-800/50">
+                                  <span>過去未払: {formatCurrency(stat.previousUnpaidBonusTotal)}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (confirm(`「${stat.displayName}」の過去の未払いボーナス（計 ${formatCurrency(stat.previousUnpaidBonusTotal)}）を一括で【支払済】に精算しますか？`)) {
+                                        markAllPastBonusesAsPaid(stat.userId);
+                                      }
+                                    }}
+                                    className="underline hover:text-amber-200 font-bold cursor-pointer ml-0.5"
+                                  >
+                                    [一括精算]
+                                  </button>
+                                </span>
+                              )}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => toggleBonusPaid(selectedWeekKey, stat.userId, !stat.isPaid)}
+                              className={`px-2.5 py-1 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-1 shrink-0 cursor-pointer ${
+                                stat.isPaid
+                                  ? "bg-stone-900 hover:bg-stone-850 text-stone-400 border border-stone-800"
+                                  : "bg-stone-800 hover:bg-stone-750 text-stone-200 border border-stone-700"
+                              }`}
+                            >
+                              {stat.isPaid ? (
+                                <>
+                                  <CheckCheck className="w-3 h-3 text-emerald-400" />
+                                  <span>支払済 (取消)</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Clock className="w-3 h-3 text-amber-400" />
+                                  <span>今週分を支払済にする</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 伝票アコーディオン（展開時のみ表示） */}
+                      {isExpandedSales && (
+                        <div className="mt-2 p-3 bg-stone-950 rounded-xl border border-stone-800 space-y-2 max-h-56 overflow-y-auto">
+                          {stat.weekSales.length === 0 ? (
+                            <p className="text-xs text-stone-400 py-2 text-center">
+                              この週の販売伝票はありません
+                            </p>
+                          ) : (
+                            stat.weekSales.map((sale) => (
+                              <div
+                                key={sale.id}
+                                className="p-2 bg-stone-900 rounded-lg border border-stone-800 flex items-center justify-between text-xs"
+                              >
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono font-bold text-amber-300">
+                                      #{sale.id}
+                                    </span>
+                                    <span className="text-stone-400 text-[11px]">
+                                      {new Date(sale.created_at).toLocaleString("ja-JP", {
+                                        month: "numeric",
+                                        day: "numeric",
+                                        weekday: "short",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })}
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {sale.items.map((it, i) => (
+                                      <span
+                                        key={i}
+                                        className="px-1.5 py-0.2 rounded bg-stone-800 text-[10px] text-stone-300 border border-stone-700"
+                                      >
+                                        {it.itemName || it.item_name} ×{it.quantity}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <span className="font-black text-white text-xs block">
+                                    {formatCurrency(sale.totalAmount ?? sale.total_amount ?? 0)}
+                                  </span>
+                                  <span className="text-[10px] text-stone-400">
+                                    手渡{staffIncentiveRate}%: {formatCurrency(sale.staffIncentiveAmount ?? Math.round((sale.totalAmount ?? sale.total_amount ?? 0) * (staffIncentiveRate / 100)))} / 店残{storeRate}%: {formatCurrency(sale.storeRemainingAmount ?? Math.round((sale.totalAmount ?? sale.total_amount ?? 0) * (storeRate / 100)))}
+                                  </span>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+              {/* 最下部のアクションフッター（週次確定バー） */}
+              <div className="p-5 rounded-3xl bg-stone-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl border border-stone-800">
+                <div>
+                  <span className="text-xs font-bold text-amber-400 block">
+                    週次支給フロー（日曜始まり・土曜締め ➜ 翌週店主が決定・確定）
+                  </span>
+                  <h4 className="text-base font-black text-white mt-0.5">
+                    {currentWeeklySummary.weekLabel} ボーナス支給総額: {formatCurrency(currentWeeklySummary.totalBonusPayout)}
+                    {currentWeeklySummary.totalUnpaidCarryover > 0 && (
+                      <span className="text-xs font-normal text-amber-300 ml-2">
+                        (過去未払い繰越 +{formatCurrency(currentWeeklySummary.totalUnpaidCarryover)} 含む総額: {formatCurrency(currentWeeklySummary.totalDuePayout)})
+                      </span>
+                    )}
+                  </h4>
+                  <p className="text-xs text-stone-400 mt-1">
+                    {currentWeeklySummary.isFinalized
+                      ? `✅ ${currentWeeklySummary.finalizedBy} により確定済みです。確定解除で再編集も可能です。`
+                      : "各スタッフの支給金額を保存後、確定ボタンを押して支給を正式決定してください。"}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleSaveAllStaffBonuses}
+                    className="px-4 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-750 text-stone-200 text-xs font-bold border border-stone-700 transition-colors cursor-pointer"
+                  >
+                    全員分を下書き保存
+                  </button>
+                  {!currentWeeklySummary.isFinalized ? (
+                    <button
+                      type="button"
+                      onClick={handleFinalizeWeek}
+                      className="px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 text-xs font-black shadow-md flex items-center gap-2 transition-all hover:scale-105 cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      この週のボーナスを最終確定
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleUnfinalizeWeek}
+                      className="px-4 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-750 text-stone-300 text-xs font-bold border border-stone-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      確定解除（再編集）
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================
+              サブタブ 2: 💳 支給・支払い＆金庫管理 (payout)
+          ======================================================== */}
+          {bonusSubTab === "payout" && (
+            <div className="space-y-5">
+              {/* 🏛️ 【ゲーム内金庫 ＆ ボーナス支給・過去未払い合算サマリー】 */}
+              <div className="p-5 rounded-3xl bg-stone-900 border border-stone-800 shadow-xl space-y-4 text-stone-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-800/80 pb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                      <Landmark className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-white flex items-center gap-1.5">
+                        ゲーム内金庫残高 ＆ ボーナス支払資金シミュレーション
+                      </h4>
+                      <p className="text-[11px] text-stone-400">
+                        売上発生で自動入金され、ボーナス支払時（支払済✅）に自動出金されます。手動での直接調整も可能です
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenVaultModal}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 text-xs font-black flex items-center gap-1.5 transition-all shadow-md cursor-pointer self-start sm:self-auto active:scale-95"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    金庫残高を手動調整
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* ① 現在のゲーム内金庫残高 */}
+                  <div className="p-3.5 rounded-2xl bg-stone-950 border border-amber-500/40 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-amber-400">🏛️ ゲーム内金庫残高:</span>
+                      <span className="text-[10px] font-bold text-amber-300/80 bg-amber-950/60 border border-amber-500/30 px-1.5 py-0.2 rounded">
+                        現在資金
+                      </span>
+                    </div>
+                    <span className="text-2xl font-black text-amber-300 block mt-1 font-mono">
+                      {formatCurrency(vaultBalance)}
+                    </span>
+                    <span className="text-[10px] text-stone-400 block mt-0.5">
+                      店舗の全手元残高
+                    </span>
+                  </div>
+
+                  {/* ② 今週の決定ボーナス総額 */}
+                  <div className="p-3.5 rounded-2xl bg-stone-950 border border-stone-800 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-stone-300">今週の決定ボーナス:</span>
+                      <span className="text-[10px] text-stone-400">
+                        {currentWeeklySummary.isFinalized ? "✅ 確定済" : "📝 査定中"}
+                      </span>
+                    </div>
+                    <span className="text-xl font-black text-rose-400 block mt-1 font-mono">
+                      {formatCurrency(currentWeeklySummary.totalBonusPayout)}
+                    </span>
+                    <span className="text-[10px] text-stone-400 block mt-0.5">
+                      スタッフ{currentWeeklySummary.staffStats.length}名分
+                    </span>
+                  </div>
+
+                  {/* ③ 手渡し未払い残高 (残り支払うべき総額) */}
+                  <div className="p-3.5 rounded-2xl bg-stone-950 border border-amber-500/40 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-amber-300">手渡し未払い残高 (残り支払額):</span>
+                      {currentWeeklySummary.totalRemainingDuePayout > 0 ? (
+                        <span className="text-[9px] font-bold text-amber-300 bg-amber-950/80 border border-amber-500/40 px-1.5 py-0.2 rounded animate-pulse">
+                          要手渡し
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-bold text-emerald-300 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.2 rounded">
+                          全額支給済 ✨
+                        </span>
+                      )}
+                    </div>
+                    <span className={`text-xl font-black block mt-1 font-mono ${currentWeeklySummary.totalRemainingDuePayout > 0 ? "text-amber-400" : "text-emerald-400"}`}>
+                      {formatCurrency(currentWeeklySummary.totalRemainingDuePayout)}
+                    </span>
+                    <span className="text-[10px] text-stone-400 block mt-0.5">
+                      決定総枠: {formatCurrency(currentWeeklySummary.totalDuePayout)}
+                      {currentWeeklySummary.totalUnpaidCarryover > 0 && ` (過去未払 +${formatCurrency(currentWeeklySummary.totalUnpaidCarryover)} 含む)`}
+                    </span>
+                  </div>
+
+                  {/* ④ 全残額支払後の予想金庫残高 */}
+                  {(() => {
+                    const projectedBalance = vaultBalance - currentWeeklySummary.totalRemainingDuePayout;
+                    const isSafe = projectedBalance >= 0;
+                    return (
+                      <div className={`p-3.5 rounded-2xl border shadow-sm ${
+                        isSafe
+                          ? "bg-emerald-950/20 border-emerald-500/40"
+                          : "bg-rose-950/30 border-rose-500/50"
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <span className={`text-[11px] font-bold ${isSafe ? "text-emerald-300" : "text-rose-300"}`}>
+                            📉 残額支払後 予想金庫残高:
+                          </span>
+                          <span className={`text-[9px] font-black px-1.5 py-0.2 rounded ${
+                            isSafe ? "bg-emerald-900/60 text-emerald-300" : "bg-rose-900/60 text-rose-300"
+                          }`}>
+                            {isSafe ? "余力あり" : "残高不足"}
+                          </span>
+                        </div>
+                        <span className={`text-2xl font-black block mt-1 font-mono ${
+                          isSafe ? "text-emerald-400" : "text-rose-400"
+                        }`}>
+                          {formatCurrency(projectedBalance)}
+                        </span>
+                        <span className={`text-[10px] block mt-0.5 ${isSafe ? "text-emerald-400/80" : "text-rose-400/80"}`}>
+                          {isSafe ? "✅ 金庫資金で十分支給可能" : "⚠️ 金庫残高を超過しています"}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* 💳 スタッフ別 支給・手渡し精算専用テーブル */}
+              <div className="bg-stone-900 rounded-3xl border border-stone-800 p-5 shadow-xl space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-800 pb-3">
+                  <div>
+                    <h3 className="text-sm font-black text-white flex items-center gap-2">
+                      <Coins className="w-4 h-4 text-amber-500" />
+                      スタッフ別 ボーナス支給・手渡し精算ステータス
+                    </h3>
+                    <p className="text-[11px] text-stone-400 mt-0.5">
+                      現金をスタッフへ手渡したら「支払済」をクリックしてください。未払いのまま次週を迎えた場合は自動で繰り越されます
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-stone-400 block">全スタッフ未払い残高</span>
+                    <span className="text-base font-black text-amber-300 font-mono">
+                      {formatCurrency(currentWeeklySummary.totalRemainingDuePayout)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="divide-y divide-stone-800/80">
+                  {currentWeeklySummary.staffStats.map((stat) => {
+                    const hasPastUnpaid = stat.previousUnpaidBonusTotal > 0;
+                    return (
+                      <div
+                        key={stat.userId}
+                        className="py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-xl bg-stone-800 flex items-center justify-center text-sm shrink-0">
+                            {stat.role === "executive" ? "👑" : "👤"}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-white text-sm">{stat.displayName}</span>
+                              <span className="text-[10px] text-stone-400 px-2 py-0.2 rounded-full bg-stone-800 border border-stone-700">
+                                {stat.roleName}
+                              </span>
+                              {stat.gameId && (
+                                <span className="text-[10px] font-mono font-bold text-amber-300 bg-amber-950/60 px-1.5 py-0.2 rounded border border-amber-600/40">
+                                  🎮 #{stat.gameId}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-stone-400 mt-0.5 flex items-center gap-2 flex-wrap">
+                              <span>今週ボーナス: <strong className="text-white font-mono">{formatCurrency(stat.bonusAmount)}</strong></span>
+                              {hasPastUnpaid && (
+                                <span className="text-amber-300 font-bold bg-amber-950/60 px-1.5 py-0.2 rounded border border-amber-800/40">
+                                  過去未払繰越: {formatCurrency(stat.previousUnpaidBonusTotal)}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (confirm(`「${stat.displayName}」の過去の未払いボーナス（計 ${formatCurrency(stat.previousUnpaidBonusTotal)}）を一括で【支払済】に精算しますか？`)) {
+                                        markAllPastBonusesAsPaid(stat.userId);
+                                      }
+                                    }}
+                                    className="underline hover:text-amber-200 ml-1 cursor-pointer"
+                                  >
+                                    [一括精算]
+                                  </button>
+                                </span>
+                              )}
+                              {stat.bonusNote && (
+                                <span className="text-stone-500 italic">({stat.bonusNote})</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 右側: 手渡すべき金額 ＆ 支払いトグルボタン */}
+                        <div className="flex items-center gap-4 self-end md:self-center">
+                          <div className="text-right">
+                            <span className="text-[10px] text-stone-400 block">手渡す総額</span>
+                            <span className={`text-base font-black font-mono ${stat.remainingDueAmount === 0 ? "text-emerald-400" : "text-amber-300"}`}>
+                              {stat.remainingDueAmount === 0 ? "¥0 (精算済)" : formatCurrency(stat.remainingDueAmount)}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => toggleBonusPaid(selectedWeekKey, stat.userId, !stat.isPaid)}
+                            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+                              stat.isPaid
+                                ? "bg-stone-800 hover:bg-stone-750 text-stone-300 border border-stone-700"
+                                : "bg-amber-600 hover:bg-amber-500 text-stone-950 shadow-sm"
+                            }`}
+                          >
+                            {stat.isPaid ? (
+                              <>
+                                <CheckCheck className="w-4 h-4 text-emerald-400" />
+                                <span>支払済 (取消)</span>
+                              </>
+                            ) : (
+                              <>
+                                <Clock className="w-4 h-4" />
+                                <span>手渡し完了 (支払済)</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 最下部のアクションフッター（週次確定バー） */}
+              <div className="p-5 rounded-3xl bg-stone-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl border border-stone-800">
+                <div>
+                  <span className="text-xs font-bold text-amber-400 block">
+                    週次ボーナス最終確定
+                  </span>
+                  <h4 className="text-base font-black text-white mt-0.5">
+                    {currentWeeklySummary.weekLabel} 支給決定総額: {formatCurrency(currentWeeklySummary.totalBonusPayout)}
+                  </h4>
+                </div>
+
+                <div>
+                  {!currentWeeklySummary.isFinalized ? (
+                    <button
+                      type="button"
+                      onClick={handleFinalizeWeek}
+                      className="px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 text-xs font-black shadow-md flex items-center gap-2 transition-all hover:scale-105 cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      この週のボーナスを最終確定
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleUnfinalizeWeek}
+                      className="px-4 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-750 text-stone-300 text-xs font-bold border border-stone-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      確定解除（再編集）
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================
+              サブタブ 3: ⚙️ 査定ルール＆各種手当設定 (settings)
+          ======================================================== */}
+          {bonusSubTab === "settings" && (
+            <div className="space-y-6">
+              {/* 💡 ボーナスの出し方・査定ルール解説パネル（折りたたみ可能） */}
+              <div className="bg-stone-900 rounded-3xl border border-amber-500/40 p-5 shadow-xl text-stone-100">
+                <div
+                  className="flex items-center justify-between cursor-pointer"
+                  onClick={() => setShowBonusHelp(!showBonusHelp)}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="p-2 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                      <Calculator className="w-5 h-5" />
+                    </span>
+                    <div>
+                      <h3 className="text-sm font-black text-white flex items-center gap-2">
+                        💡 【和食さくら】ボーナス査定・出し方のルール解説
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          店主必読マニュアル
+                        </span>
+                      </h3>
+                      <p className="text-xs text-stone-400 mt-0.5">
+                        日々の即時手渡し（{staffIncentiveRate}%） ＋ 週締め時のボーナス（役職手当＋{storeRate}%手元残り歩合＋仕込み手当＋素材手当）の算出基準
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-xs text-amber-400 font-bold hover:text-amber-300 px-3 py-1.5 rounded-xl bg-stone-950 border border-stone-800 cursor-pointer"
+                  >
+                    {showBonusHelp ? "折りたたむ ▲" : "仕組みを見る ▼"}
+                  </button>
+                </div>
+
+                {showBonusHelp && (
+                  <div className="mt-4 pt-4 border-t border-stone-800/80 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                    <div className="bg-stone-950/80 p-3.5 rounded-2xl border border-stone-800 space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-amber-300 font-bold">
+                        <span className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center text-[11px] text-amber-300 font-black">1</span>
+                        日々の即時インセンティブ（{staffIncentiveRate}%）
+                      </div>
+                      <p className="text-[11px] text-stone-300 leading-relaxed">
+                        レジで料理・商品が売れた際、売上金額の<strong className="text-amber-300">{staffIncentiveRate}%</strong>はその場でスタッフが受取済みの即時インセンティブです。残りの<strong className="text-emerald-300">{storeRate}%</strong>が店舗の金庫に入金されます。
+                      </p>
+                    </div>
+
+                    <div className="bg-stone-950/80 p-3.5 rounded-2xl border border-stone-800 space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-rose-300 font-bold">
+                        <span className="w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center text-[11px] text-rose-300 font-black">2</span>
+                        週次ボーナス試算（4大構成要素）
+                      </div>
+                      <p className="text-[11px] text-stone-300 leading-relaxed">
+                        毎週日曜〜土曜締めで査定するボーナスは、<strong className="text-white">①役職別基本手当</strong>＋<strong className="text-white">②店舗残り{storeRate}%からの歩合</strong>（例: {storeRemainingBonusRate}%）＋<strong className="text-white">③クラフト仕込み手当</strong>（例: ¥{craftRewardRate}/個）＋<strong className="text-white">④素材調達手当</strong>（例: ¥{ingredientRewardRate}/個）の合計で推奨額が自動試算されます。
+                      </p>
+                    </div>
+
+                    <div className="bg-stone-950/80 p-3.5 rounded-2xl border border-stone-800 space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-emerald-300 font-bold">
+                        <span className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-[11px] text-emerald-300 font-black">3</span>
+                        確定・支給 ＆ 未払い繰越管理
+                      </div>
+                      <p className="text-[11px] text-stone-300 leading-relaxed">
+                        査定額が決まったら「最終確定」し、現金を渡したら「支払済」にチェック。支払えなかった分は<strong className="text-amber-300">翌週以降へ「過去未払い繰越」として自動合算</strong>されるため、給与の未払い・支払漏れを完全に防止できます。
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ボーナス査定・支給基準設定（店主の査定目安ルール） */}
+              <div className="bg-stone-900 rounded-3xl border border-stone-800 p-5 shadow-xl space-y-4 text-stone-100">
+                <div>
+                  <span className="text-sm font-black text-white flex items-center gap-1.5">
+                    <Sliders className="w-4 h-4 text-amber-500" />
+                    ボーナス査定・支給基準設定（店主の査定目安ルール）
+                  </span>
+                  <p className="text-[11px] text-stone-400 mt-0.5">
+                    店舗手元残り（{storeRate}%）からの歩合還元率や各種手当を設定します。各スタッフの推奨額計算に自動連動します
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+                  {/* ① 店舗手元純残り割合 */}
+                  <div className="bg-stone-950 p-3.5 rounded-2xl border border-amber-500/30">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-bold text-amber-300">
+                        ① 店舗手元純残り割合:
+                      </label>
+                      <span className="text-[9px] text-stone-400">手渡:{staffIncentiveRate}%</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="5"
+                        value={storeRate}
+                        onChange={(e) => {
+                          const v = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
+                          updateStoreSettings({ storeRemainingRate: v });
+                        }}
+                        className="w-16 px-2.5 py-1.5 bg-stone-900 rounded-xl border border-amber-500/50 font-black text-amber-300 focus:border-amber-400"
+                      />
+                      <span className="text-stone-400 font-semibold">%（店純利益）</span>
+                    </div>
+                  </div>
+
+                  {/* ② 店舗純残りからの還元歩合率 */}
+                  <div className="bg-stone-950 p-3.5 rounded-2xl border border-stone-800">
+                    <label className="block text-[11px] font-bold text-stone-300 mb-1">
+                      ② 手元残り({storeRate}%)還元歩合:
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={storeRemainingBonusRate}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value) || 0;
+                          setStoreRemainingBonusRate(v);
+                          updateStoreSettings({ storeRemainingBonusRate: v });
+                        }}
+                        className="w-16 px-2.5 py-1.5 bg-stone-900 rounded-xl border border-stone-700 font-black text-white focus:border-amber-500"
+                      />
+                      <span className="text-stone-400 font-semibold">%（ボーナス）</span>
+                    </div>
+                  </div>
+
+                  {/* ③ クラフト仕込み手当 */}
+                  <div className={`bg-stone-950 p-3.5 rounded-2xl border ${storeSettings.enableCrafting ? "border-stone-800" : "border-stone-800/40 opacity-50"}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-bold text-stone-300">
+                        ③ クラフト仕込み手当:
+                      </label>
+                      {!storeSettings.enableCrafting && (
+                        <span className="text-[9px] font-bold text-amber-500 bg-amber-950/60 px-1.5 py-0.2 rounded border border-amber-800">機能OFF中</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        step="50"
+                        value={craftRewardRate}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value) || 0;
+                          setCraftRewardRate(v);
+                          updateStoreSettings({ craftRewardRate: v });
+                        }}
+                        disabled={!storeSettings.enableCrafting}
+                        className="w-20 px-2.5 py-1.5 bg-stone-900 rounded-xl border border-stone-700 font-black text-white focus:border-amber-500 disabled:opacity-50"
+                      />
+                      <span className="text-stone-400 font-semibold">円/品</span>
+                    </div>
+                  </div>
+
+                  {/* ④ 素材調達手当 */}
+                  <div className={`bg-stone-950 p-3.5 rounded-2xl border ${storeSettings.enableInventory ? "border-stone-800" : "border-stone-800/40 opacity-50"}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-bold text-emerald-400">
+                        ④ 素材調達手当:
+                      </label>
+                      {!storeSettings.enableInventory && (
+                        <span className="text-[9px] font-bold text-amber-500 bg-amber-950/60 px-1.5 py-0.2 rounded border border-amber-800">機能OFF中</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        step="50"
+                        value={ingredientRewardRate}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value) || 0;
+                          setIngredientRewardRate(v);
+                          updateStoreSettings({ ingredientRewardRate: v });
+                        }}
+                        disabled={!storeSettings.enableInventory}
+                        className="w-20 px-2.5 py-1.5 bg-stone-900 rounded-xl border border-stone-700 font-black text-emerald-300 focus:border-emerald-500 disabled:opacity-50"
+                      />
+                      <span className="text-stone-400 font-semibold">円/個</span>
+                    </div>
+                  </div>
+
+                  {/* ⑤ 標準基本手当 */}
+                  <div className="bg-stone-950 p-3.5 rounded-2xl border border-stone-800">
+                    <label className="block text-[11px] font-bold text-stone-300 mb-1">
+                      ⑤ 標準基本手当:
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1000"
+                        value={baseAllowance}
+                        onChange={(e) => setBaseAllowance(parseInt(e.target.value) || 0)}
+                        className="w-24 px-2.5 py-1.5 bg-stone-900 rounded-xl border border-stone-700 font-black text-white focus:border-amber-500"
+                      />
+                      <span className="text-stone-400 font-semibold">円/週</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ロール別基本手当の一覧 ＆ クイック変更バー */}
+                <div className="p-3.5 bg-stone-950/80 rounded-2xl border border-stone-800 space-y-2">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5 text-amber-400" />
+                      現在の役職（ロール）別 基本手当一覧（数値を直接変更して即座に反映可能）:
+                    </span>
+                    <span className="text-[10px] text-stone-500">
+                      ※変更した手当額は役職設定に即座に自動保存されます
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 pt-1">
+                    {roles.map((r) => (
+                      <div
+                        key={r.id}
+                        className="p-2 rounded-xl bg-stone-900 border border-stone-800 flex flex-col justify-between gap-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-xs font-bold text-stone-200 truncate" title={r.name}>
+                            {r.name}
+                          </span>
+                          {r.isExecutive && (
+                            <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 shrink-0">
+                              幹部
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-stone-500 font-bold">¥</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1000"
+                            value={r.baseAllowance ?? 20000}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              updateRole(r.id, { baseAllowance: val });
+                            }}
+                            className="w-full px-2 py-1 bg-stone-950 rounded-lg border border-stone-700 text-xs font-black text-amber-300 focus:border-amber-500"
+                            title="手当額を直接変更"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 【店舗別 & 2店舗合計 実績サマリーカード】 */}
+              <div className="bg-stone-900 rounded-3xl border border-stone-800 p-6 shadow-xl space-y-5 text-stone-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                      <TrendingUp className="w-5 h-5" />
+                    </span>
+                    <div>
+                      <h3 className="text-base font-black text-white">
+                        【各店舗別 &amp; 2店舗合計】{currentWeeklySummary.weekLabel} 実績サマリー
+                      </h3>
+                      <p className="text-xs text-stone-400">
+                        和食さくら・Buon viaggio 各店舗ごとの売上と手渡し・手元純利益、および全体合計
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-bold text-stone-300 bg-stone-800 border border-stone-700 px-3 py-1 rounded-xl">
+                    在籍スタッフ: {currentWeeklySummary.staffStats.length}名
+                  </span>
+                </div>
+
+                {/* 店舗別 実績内訳カード（3カラム: 🌸 和食さくら / 🍷 Buon viaggio / 🏛️ 2店舗合計） */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* 🌸 和食さくら */}
+                  <div className="p-4 rounded-2xl bg-stone-950 border border-rose-900/40 space-y-3">
+                    <div className="flex items-center justify-between border-b border-rose-950/60 pb-2">
+                      <span className="text-xs font-black text-rose-400 flex items-center gap-1.5">
+                        <Store className="w-4 h-4 text-rose-500" />
+                        🌸 和食さくら 実績
+                      </span>
+                      <span className="text-[10px] text-stone-400">料理販売: {currentWeeklySummary.sakura.itemsSold}品</span>
+                    </div>
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-stone-400">売上高 (100%):</span>
+                        <span className="text-base font-black text-white font-mono">{formatCurrency(currentWeeklySummary.sakura.salesAmount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-amber-400">手渡済インセンティブ ({staffIncentiveRate}%):</span>
+                        <span className="font-bold text-amber-300 font-mono">{formatCurrency(currentWeeklySummary.sakura.incentive30)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-emerald-400">店舗手元純残り ({storeRate}%):</span>
+                        <span className="font-bold text-emerald-300 font-mono">{formatCurrency(currentWeeklySummary.sakura.storeRemaining70)}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1 border-t border-stone-800/80">
+                        <span className="text-stone-400">厨房仕込み数:</span>
+                        <span className="font-bold text-stone-200">{currentWeeklySummary.sakura.craftItemsCount} 個</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 🍷 Buon viaggio */}
+                  <div className="p-4 rounded-2xl bg-stone-950 border border-purple-900/40 space-y-3">
+                    <div className="flex items-center justify-between border-b border-purple-950/60 pb-2">
+                      <span className="text-xs font-black text-purple-400 flex items-center gap-1.5">
+                        <Store className="w-4 h-4 text-purple-400" />
+                        🍷 Buon viaggio 実績
+                      </span>
+                      <span className="text-[10px] text-stone-400">料理販売: {currentWeeklySummary.buonViaggio.itemsSold}品</span>
+                    </div>
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-stone-400">売上高 (100%):</span>
+                        <span className="text-base font-black text-white font-mono">{formatCurrency(currentWeeklySummary.buonViaggio.salesAmount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-amber-400">手渡済インセンティブ ({staffIncentiveRate}%):</span>
+                        <span className="font-bold text-amber-300 font-mono">{formatCurrency(currentWeeklySummary.buonViaggio.incentive30)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-emerald-400">店舗手元純残り ({storeRate}%):</span>
+                        <span className="font-bold text-emerald-300 font-mono">{formatCurrency(currentWeeklySummary.buonViaggio.storeRemaining70)}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1 border-t border-stone-800/80">
+                        <span className="text-stone-400">厨房仕込み数:</span>
+                        <span className="font-bold text-stone-200">{currentWeeklySummary.buonViaggio.craftItemsCount} 個</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 🏛️ 2店舗 総合計 */}
+                  <div className="p-4 rounded-2xl bg-stone-950 border border-amber-500/40 space-y-3">
+                    <div className="flex items-center justify-between border-b border-amber-500/30 pb-2">
+                      <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                        🏛️ 2店舗 総合計
+                      </span>
+                      <span className="text-[10px] text-amber-300/80 font-bold">全体サマリー</span>
+                    </div>
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-stone-300 font-bold">総売上 (100%):</span>
+                        <span className="text-base font-black text-amber-300 font-mono">{formatCurrency(currentWeeklySummary.totalSales)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-amber-400">手渡総額 ({staffIncentiveRate}%):</span>
+                        <span className="font-bold text-amber-300 font-mono">{formatCurrency(currentWeeklySummary.totalIncentive30)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-emerald-400">店舗純残り総額 ({storeRate}%):</span>
+                        <span className="font-bold text-emerald-300 font-mono">{formatCurrency(currentWeeklySummary.totalStoreRemaining70)}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1 border-t border-stone-800/80">
+                        <span className="text-stone-300">厨房総仕込み数:</span>
+                        <span className="font-bold text-indigo-300">{currentWeeklySummary.totalCraftItems} 個</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================
+          タブ2: ⚙️ レシピ & 価格設定
+      ======================================================== */}
+      {activeTab === "recipes" && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-black text-white flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                料理商品の販売価格 &amp; クラフトレシピ設定
+              </h2>
+              <p className="text-xs text-stone-400 mt-0.5">
+                メイン画面で販売するときの値段と、「作成」ボタンを押したときに自動消費する素材の個数を指定します
+              </p>
+            </div>
+
+            {/* 店舗フィルター */}
+            <div className="flex items-center gap-1.5 bg-stone-950 p-1 rounded-xl border border-stone-800">
+              <button
+                type="button"
+                onClick={() => setRecipeShopFilter("all")}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  recipeShopFilter === "all"
+                    ? "bg-stone-700 text-white shadow-xs"
+                    : "text-stone-400 hover:text-white"
+                }`}
+              >
+                全店舗 ({products.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecipeShopFilter("sakura")}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                  recipeShopFilter === "sakura"
+                    ? "bg-rose-600 text-white shadow-xs"
+                    : "text-stone-400 hover:text-white"
+                }`}
+              >
+                🌸 和食さくら ({products.filter((p) => (p.shopId || "sakura") === "sakura").length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecipeShopFilter("buon_viaggio")}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                  recipeShopFilter === "buon_viaggio"
+                    ? "bg-purple-600 text-white shadow-xs"
+                    : "text-stone-400 hover:text-white"
+                }`}
+              >
+                🍷 Buon viaggio ({products.filter((p) => p.shopId === "buon_viaggio").length})
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {products
+              .filter((product) => {
+                if (recipeShopFilter === "all") return true;
+                return (product.shopId || "sakura") === recipeShopFilter;
+              })
+              .sort((a, b) => {
+                const catA = categories.find((c) => c.name === a.category_name);
+                const catB = categories.find((c) => c.name === b.category_name);
+                const orderA = catA ? catA.order : 9999;
+                const orderB = catB ? catB.order : 9999;
+                if (orderA !== orderB) return orderA - orderB;
+                return (a.category_name || "").localeCompare(b.category_name || "") || a.name.localeCompare(b.name);
+              })
+              .map((product) => {
+              const isEditingRecipe = editingRecipeProductId === product.id;
+              const currentPriceVal =
+                tempPrices[product.id] !== undefined
+                  ? tempPrices[product.id]
+                  : product.selling_price;
+              const isBuonViaggio = product.shopId === "buon_viaggio";
+
+              return (
+                <div
+                  key={product.id}
+                  className="bg-stone-900/90 rounded-2xl border border-stone-800 p-5 shadow-xl space-y-4 text-stone-100"
+                >
+                  {/* 商品ヘッダー */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-xl bg-stone-950 border border-stone-700 overflow-hidden shrink-0 flex items-center justify-center">
+                        {product.image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={product.image_url}
+                            alt={product.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-2xl">🍱</span>
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-white text-base">{product.name}</h3>
+                          <span
+                            className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                              isBuonViaggio
+                                ? "bg-purple-950 text-purple-300 border-purple-700"
+                                : "bg-rose-950 text-rose-300 border-rose-700"
+                            }`}
+                          >
+                            {isBuonViaggio ? "🍷 Buon viaggio" : "🌸 和食さくら"}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-stone-400">
+                          {product.category_name} | 現在庫: <strong className="text-white">{product.current_stock}</strong> {product.unit}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 1. 販売価格の設定 */}
+                  <div className="p-3 rounded-xl bg-stone-950 border border-stone-800">
+                    <label className="block text-[11px] font-bold text-stone-300 mb-1">
+                      販売価格 (メイン画面の合計金額に反映):
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-stone-400">¥</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="10"
+                        value={currentPriceVal}
+                        onChange={(e) =>
+                          setTempPrices({
+                            ...tempPrices,
+                            [product.id]: parseInt(e.target.value) || 0,
+                          })
+                        }
+                        className="w-36 px-3 py-1.5 bg-stone-900 rounded-lg border border-stone-700 font-black text-white text-sm focus:border-amber-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSavePrice(product.id)}
+                        className="px-3.5 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold transition-colors shadow-xs cursor-pointer border border-stone-700"
+                      >
+                        価格を保存
+                      </button>
+                      <span className="text-[11px] text-stone-400 ml-auto">
+                        現在: ¥{product.selling_price.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 2. クラフトレシピ (必要素材) の設定 */}
+                  <div className="p-3 rounded-xl bg-amber-950/20 border border-amber-500/30">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-[11px] font-bold text-amber-300 flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                        1つ作るのに必要な素材レシピ:
+                      </label>
+                      {!isEditingRecipe && (
+                        <button
+                          type="button"
+                          onClick={() => handleStartEditRecipe(product)}
+                          className="text-xs font-bold text-amber-400 hover:text-amber-300 underline cursor-pointer"
+                        >
+                          レシピを編集する
+                        </button>
+                      )}
+                    </div>
+
+                    {!isEditingRecipe ? (
+                      <div>
+                        {product.recipe && product.recipe.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {product.recipe.map((r, idx) => (
+                              <span
+                                key={idx}
+                                className="px-2.5 py-1 rounded-lg bg-stone-950 border border-amber-500/30 text-xs font-bold text-stone-200 shadow-xs"
+                              >
+                                {r.ingredient_name}{" "}
+                                <span className="text-amber-400 font-black">×{r.quantity}</span>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-stone-400 italic">
+                            必要素材が設定されていません（素材なしで作成可能）
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      /* レシピ編集モーダル / 展開フォーム */
+                      <div className="space-y-3 pt-2">
+                        {/* 現在選択中の必要素材一覧 */}
+                        <div className="space-y-1.5">
+                          {tempRecipe.length === 0 ? (
+                            <p className="text-xs text-stone-400">素材が選択されていません</p>
+                          ) : (
+                            tempRecipe.map((r, idx) => (
+                              <div
+                                key={idx}
+                                className="flex items-center justify-between bg-stone-950 px-3 py-1.5 rounded-lg border border-stone-800 text-xs"
+                              >
+                                <span className="font-bold text-stone-200">{r.ingredient_name}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-black text-amber-400">×{r.quantity}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveIngredientFromRecipe(idx)}
+                                    className="text-rose-400 hover:text-rose-300 p-0.5 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        {/* 素材追加コントロール */}
+                        <div className="flex items-center gap-1.5 pt-2 border-t border-amber-500/30">
+                          <select
+                            value={selectedIngredientId}
+                            onChange={(e) => setSelectedIngredientId(e.target.value)}
+                            className="text-xs px-2 py-1.5 bg-stone-950 rounded-lg border border-stone-700 font-bold text-stone-200 flex-1 cursor-pointer"
+                          >
+                            {ingredients.map((ing) => (
+                              <option key={ing.id} value={ing.id} className="bg-stone-900 text-white">
+                                {ing.name} (在庫: {ing.current_stock})
+                              </option>
+                            ))}
+                          </select>
+
+                          <div className="flex items-center gap-1">
+                            <span className="text-[11px] text-stone-400">個数:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="99"
+                              value={ingredientQuantity}
+                              onChange={(e) => setIngredientQuantity(parseInt(e.target.value) || 1)}
+                              className="w-14 px-2 py-1.5 bg-stone-950 rounded-lg border border-stone-700 text-xs font-bold text-center text-white"
+                            />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleAddIngredientToRecipe}
+                            className="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> 追加
+                          </button>
+                        </div>
+
+                        {/* レシピ保存ボタン */}
+                        <div className="flex items-center justify-end gap-2 pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingRecipeProductId(null)}
+                            className="px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold cursor-pointer"
+                          >
+                            キャンセル
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveRecipe(product.id)}
+                            className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <Save className="w-3.5 h-3.5" /> レシピを決定・保存
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================
+          タブ3: 🍱 商品・素材登録 & 写真管理
+      ======================================================== */}
+      {activeTab === "items" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* 左側: 新規商品・素材の登録フォーム */}
+          <div className="bg-stone-900/90 p-5 rounded-3xl border border-stone-800 shadow-xl h-fit space-y-4 text-stone-100">
+            <div>
+              <h2 className="text-sm font-black text-white flex items-center gap-2">
+                <Plus className="w-4 h-4 text-amber-500" />
+                商品・素材の新規登録
+              </h2>
+              <p className="text-xs text-stone-400 mt-0.5">
+                新メニュー（料理）や新しい食材を登録し、写真をアップロードできます
+              </p>
+            </div>
+
+            <form onSubmit={handleCreateItem} className="space-y-3.5">
+              {/* 品目種別 */}
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  登録する品目の種類:
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setItemType("product");
+                      setItemCategory(itemShopId === "buon_viaggio" ? "ピザ・パスタ" : "寿司・料理");
+                    }}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      itemType === "product"
+                        ? "bg-amber-600 text-white border-amber-600 shadow-xs"
+                        : "bg-stone-950 text-stone-400 border-stone-800 hover:text-white"
+                    }`}
+                  >
+                    🍱 料理商品 (完成品)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setItemType("ingredient");
+                      setItemCategory("海鮮・食材");
+                    }}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      itemType === "ingredient"
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "bg-stone-950 text-stone-400 border-stone-800 hover:text-white"
+                    }`}
+                  >
+                    🥬 クラフト素材 (原材料)
+                  </button>
+                </div>
+              </div>
+
+              {/* 料理の場合: 所属店舗の選択 */}
+              {itemType === "product" ? (
+                <div>
+                  <label className="block text-xs font-bold text-stone-300 mb-1">
+                    所属店舗:
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {shops.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setItemShopId(s.id)}
+                        className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          itemShopId === s.id
+                            ? "bg-amber-600 text-stone-950 border-amber-500 shadow-xs font-black scale-[1.02]"
+                            : "bg-stone-950 text-stone-400 border-stone-800 hover:text-white"
+                        }`}
+                      >
+                        <span>{s.icon}</span>
+                        <span>{s.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold flex items-center gap-1.5">
+                  <span>🥬</span>
+                  <span>クラフト素材（原材料）は全店舗で共通利用できます</span>
+                </div>
+              )}
+
+              {/* 品名 */}
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  品名 (料理名または素材名):
+                </label>
+                <input
+                  type="text"
+                  placeholder="例: 上うな重、和牛ステーキ、生ウニ"
+                  value={itemName}
+                  onChange={(e) => setItemName(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs font-bold text-white placeholder:text-stone-600 focus:border-amber-500"
+                  required
+                />
+              </div>
+
+              {/* カテゴリ */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-stone-300">カテゴリ:</label>
+                  <span className="text-[10px] text-stone-400">登録済みカテゴリーから選択または自由入力</span>
+                </div>
+                <div className="flex gap-1.5 flex-wrap mb-1.5">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setItemCategory(cat.name)}
+                      className={`px-2 py-0.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
+                        itemCategory === cat.name
+                          ? "bg-amber-500/20 text-amber-300 border-amber-500/50"
+                          : "bg-stone-800 text-stone-400 border-stone-700 hover:text-white"
+                      }`}
+                    >
+                      {cat.icon} {cat.name}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  list="item-categories-list"
+                  placeholder="例: 料理、飲み物、甘味、素材..."
+                  value={itemCategory}
+                  onChange={(e) => setItemCategory(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs text-white placeholder:text-stone-600 focus:border-amber-500"
+                />
+                <datalist id="item-categories-list">
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.name} />
+                  ))}
+                </datalist>
+              </div>
+
+              {/* 料理の場合: 販売価格 */}
+              {itemType === "product" && (
+                <div>
+                  <label className="block text-xs font-bold text-stone-300 mb-1">
+                    販売価格 (¥):
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="50"
+                    value={itemPrice}
+                    onChange={(e) => setItemPrice(parseInt(e.target.value) || 0)}
+                    className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs font-black text-amber-400 focus:border-amber-500"
+                    required
+                  />
+                </div>
+              )}
+
+              {/* 初期在庫数 & 単位 */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-bold text-stone-300 mb-1">
+                    初期在庫数:
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={itemInitialStock}
+                    onChange={(e) => setItemInitialStock(parseInt(e.target.value) || 0)}
+                    className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs font-bold text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-stone-300 mb-1">単位:</label>
+                  <input
+                    type="text"
+                    placeholder="個, 人前, 本"
+                    value={itemUnit}
+                    onChange={(e) => setItemUnit(e.target.value)}
+                    className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs text-white"
+                  />
+                </div>
+              </div>
+
+              {/* 画像アップロード */}
+              <div>
+                <ImageUploader
+                  label="商品・素材の写真 (アップロード)"
+                  currentImageUrl={itemImageUrl}
+                  onImageUploaded={(url) => setItemImageUrl(url)}
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-md shadow-amber-900/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                登録を完了する
+              </button>
+            </form>
+          </div>
+
+          {/* 右側: 登録済みアイテム一覧 & 変更・削除 */}
+          <div className="lg:col-span-2 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-black text-white flex items-center gap-2">
+                  <ImageIcon className="w-4 h-4 text-amber-500" />
+                  登録済みアイテム一覧・変更・削除 ({items.length}品目)
+                </h2>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  品名・価格・在庫数・写真の変更や、不要になった商品の削除を行えます
+                </p>
+              </div>
+
+              {/* 店舗・素材フィルター */}
+              <div className="flex items-center gap-1 bg-stone-950 p-1 rounded-xl border border-stone-800 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setItemShopFilter("all")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    itemShopFilter === "all"
+                      ? "bg-stone-700 text-white shadow-xs"
+                      : "text-stone-400 hover:text-white"
+                  }`}
+                >
+                  すべて ({items.length})
+                </button>
+                {shops.map((s) => {
+                  const count = items.filter((i) => i.type === "product" && (i.shopId || shops[0]?.id) === s.id).length;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setItemShopFilter(s.id)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                        itemShopFilter === s.id
+                          ? "bg-amber-600 text-stone-950 font-black shadow-xs"
+                          : "text-stone-400 hover:text-white"
+                      }`}
+                    >
+                      <span>{s.icon}</span>
+                      <span>{s.name} ({count})</span>
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setItemShopFilter("ingredient")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                    itemShopFilter === "ingredient"
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "text-stone-400 hover:text-white"
+                  }`}
+                >
+                  🥬 共通素材 ({ingredients.length})
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {items
+                .filter((item) => {
+                  if (itemShopFilter === "all") return true;
+                  if (itemShopFilter === "ingredient") return item.type === "ingredient";
+                  return item.type === "product" && (item.shopId || shops[0]?.id) === itemShopFilter;
+                })
+                .sort((a, b) => {
+                  const catA = categories.find((c) => c.name === a.category_name);
+                  const catB = categories.find((c) => c.name === b.category_name);
+                  const orderA = catA ? catA.order : 9999;
+                  const orderB = catB ? catB.order : 9999;
+                  if (orderA !== orderB) return orderA - orderB;
+                  return (a.category_name || "").localeCompare(b.category_name || "") || a.name.localeCompare(b.name);
+                })
+                .map((item) => {
+                const isProduct = item.type === "product";
+                const itemShop = shops.find((s) => s.id === item.shopId) || shops[0];
+                const isEditing = editingItemId === item.id;
+                const isChangingImage = changingImageItemId === item.id;
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`bg-stone-900/90 p-4 rounded-2xl border transition-all shadow-md flex flex-col justify-between text-stone-100 ${
+                      isEditing ? "border-amber-400 ring-2 ring-amber-500/30" : "border-stone-800"
+                    }`}
+                  >
+                    {!isEditing ? (
+                      <div>
+                        <div className="flex items-start gap-3">
+                          <div className="w-14 h-14 rounded-xl bg-stone-950 border border-stone-700 overflow-hidden shrink-0 flex items-center justify-center">
+                            {item.image_url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={item.image_url}
+                                alt={item.name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <span className="text-2xl">{isProduct ? "🍱" : "🥬"}</span>
+                            )}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {isProduct ? (
+                                <span className="text-[9px] font-black px-1.5 py-0.5 rounded border bg-stone-800 text-amber-300 border-amber-500/40 flex items-center gap-1">
+                                  <span>{itemShop?.icon || "🍱"}</span>
+                                  <span>{itemShop?.name || "料理商品"}</span>
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700">
+                                  🥬 共通素材
+                                </span>
+                              )}
+                              <span className="text-[10px] text-stone-400 font-semibold">
+                                {item.category_name}
+                              </span>
+                            </div>
+
+                            <h4 className="font-bold text-white text-sm mt-0.5 truncate">
+                              {item.name}
+                            </h4>
+
+                            <div className="flex items-center gap-2 mt-1 flex-wrap text-xs">
+                              <span className="text-stone-400">
+                                在庫: <strong className="text-white font-black">{item.current_stock}</strong> {item.unit}
+                              </span>
+                              {isProduct && (
+                                <span className="font-black text-amber-400">
+                                  ¥{item.selling_price.toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 写真変更展開 */}
+                        {isChangingImage && (
+                          <div className="mt-3 p-3 bg-stone-950 rounded-xl border border-stone-800">
+                            <ImageUploader
+                              label="新しい写真をアップロード"
+                              currentImageUrl={item.image_url}
+                              onImageUploaded={(newUrl) => {
+                                updateItemImage(item.id, newUrl);
+                                setChangingImageItemId(null);
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setChangingImageItemId(null)}
+                              className="mt-2 w-full py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold cursor-pointer"
+                            >
+                              閉じる
+                            </button>
+                          </div>
+                        )}
+
+                        {/* 操作ボタン */}
+                        {!isChangingImage && (
+                          <div className="mt-3 pt-2.5 border-t border-stone-800 flex items-center justify-between">
+                            <button
+                              type="button"
+                              onClick={() => setChangingImageItemId(item.id)}
+                              className="text-[11px] font-bold text-stone-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                            >
+                              <ImageIcon className="w-3.5 h-3.5" /> 写真変更
+                            </button>
+
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditItem(item)}
+                                className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold border border-stone-700 transition-colors flex items-center gap-1 cursor-pointer"
+                              >
+                                <Edit className="w-3 h-3" /> 変更
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteItem(item)}
+                                className="p-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-400 border border-rose-800 transition-colors cursor-pointer"
+                                title="この品目を削除"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      /* インライン品目編集フォーム */
+                      <div className="space-y-3 p-1">
+                        <div className="flex items-center justify-between border-b border-stone-800 pb-1.5">
+                          <span className="text-xs font-black text-amber-400 flex items-center gap-1">
+                            <Edit className="w-3.5 h-3.5 text-amber-500" /> 品目情報を変更
+                          </span>
+                          <span className="text-[10px] text-stone-400 font-mono">ID: {item.id}</span>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div>
+                            <label className="block text-[11px] font-bold text-stone-300 mb-0.5">品名:</label>
+                            <input
+                              type="text"
+                              value={editItemName}
+                              onChange={(e) => setEditItemName(e.target.value)}
+                              className="w-full px-2.5 py-1 bg-stone-950 rounded-lg border border-stone-700 text-xs font-bold text-white focus:border-amber-500"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[11px] font-bold text-stone-300 mb-0.5">種別:</label>
+                              <select
+                                value={editItemType}
+                                onChange={(e) => setEditItemType(e.target.value as "product" | "ingredient")}
+                                className="w-full px-2 py-1 bg-stone-950 rounded-lg border border-stone-700 text-xs font-bold text-white focus:border-amber-500 cursor-pointer"
+                              >
+                                <option value="product" className="bg-stone-900 text-white">料理商品</option>
+                                <option value="ingredient" className="bg-stone-900 text-white">クラフト素材</option>
+                              </select>
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between mb-0.5">
+                                <label className="text-[11px] font-bold text-stone-300">カテゴリ:</label>
+                              </div>
+                              <div className="flex gap-1 flex-wrap mb-1">
+                                {categories.map((cat) => (
+                                  <button
+                                    key={cat.id}
+                                    type="button"
+                                    onClick={() => setEditItemCategory(cat.name)}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer border ${
+                                      editItemCategory === cat.name
+                                        ? "bg-amber-500/20 text-amber-300 border-amber-500/50"
+                                        : "bg-stone-850 text-stone-400 border-stone-800 hover:text-white"
+                                    }`}
+                                  >
+                                    {cat.icon} {cat.name}
+                                  </button>
+                                ))}
+                              </div>
+                              <input
+                                type="text"
+                                list="edit-item-categories-list"
+                                value={editItemCategory}
+                                onChange={(e) => setEditItemCategory(e.target.value)}
+                                className="w-full px-2.5 py-1 bg-stone-950 rounded-lg border border-stone-700 text-xs text-white focus:border-amber-500"
+                              />
+                              <datalist id="edit-item-categories-list">
+                                {categories.map((cat) => (
+                                  <option key={cat.id} value={cat.name} />
+                                ))}
+                              </datalist>
+                            </div>
+                          </div>
+
+                          {/* 料理商品の場合の所属店舗 */}
+                          {editItemType === "product" && (
+                            <div>
+                              <label className="block text-[11px] font-bold text-stone-300 mb-0.5">所属店舗:</label>
+                              <select
+                                value={editItemShopId}
+                                onChange={(e) => setEditItemShopId(e.target.value)}
+                                className="w-full px-2 py-1 bg-stone-950 rounded-lg border border-stone-700 text-xs font-bold text-white focus:border-amber-500 cursor-pointer"
+                              >
+                                {shops.map((s) => (
+                                  <option key={s.id} value={s.id} className="bg-stone-900 text-white">
+                                    {s.icon} {s.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-2 gap-2">
+                            {editItemType === "product" ? (
+                              <div>
+                                <label className="block text-[11px] font-bold text-stone-300 mb-0.5">販売価格 (¥):</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="50"
+                                  value={editItemPrice}
+                                  onChange={(e) => setEditItemPrice(parseInt(e.target.value) || 0)}
+                                  className="w-full px-2.5 py-1 bg-stone-950 rounded-lg border border-stone-700 text-xs font-black text-amber-400 focus:border-amber-500"
+                                />
+                              </div>
+                            ) : (
+                              <div>
+                                <label className="block text-[11px] font-bold text-stone-400 mb-0.5">販売価格:</label>
+                                <div className="px-2.5 py-1 bg-stone-950 rounded-lg border border-stone-800 text-xs text-stone-500">
+                                  素材(販売なし)
+                                </div>
+                              </div>
+                            )}
+
+                            <div>
+                              <label className="block text-[11px] font-bold text-stone-300 mb-0.5">在庫数 / 単位:</label>
+                              <div className="flex gap-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={editItemStock}
+                                  onChange={(e) => setEditItemStock(parseInt(e.target.value) || 0)}
+                                  className="w-2/3 px-2 py-1 bg-stone-950 rounded-lg border border-stone-700 text-xs font-bold text-white focus:border-amber-500"
+                                />
+                                <input
+                                  type="text"
+                                  value={editItemUnit}
+                                  onChange={(e) => setEditItemUnit(e.target.value)}
+                                  className="w-1/3 px-1.5 py-1 bg-stone-950 rounded-lg border border-stone-700 text-xs text-white text-center focus:border-amber-500"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <ImageUploader
+                              label="写真の差し替え"
+                              currentImageUrl={editItemImageUrl}
+                              onImageUploaded={(url) => setEditItemImageUrl(url)}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">
+                          <button
+                            type="button"
+                            onClick={() => setEditingItemId(null)}
+                            className="px-3 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold cursor-pointer"
+                          >
+                            キャンセル
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveItemEdit(item.id)}
+                            className="px-3.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <Save className="w-3.5 h-3.5" /> 保存する
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================
+          タブ4: 📜 店舗操作ログ監査
+      ======================================================== */}
+      {activeTab === "logs" && (
+        <div className="bg-stone-900/90 rounded-3xl border border-stone-800 p-6 shadow-xl space-y-4 backdrop-blur-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-black text-white flex items-center gap-2">
+                <History className="w-5 h-5 text-amber-400" />
+                店舗全操作ログ (誰が何をしたかの監査記録)
+              </h2>
+              <p className="text-xs text-stone-400 mt-0.5">
+                商品の販売、クラフト作成、在庫調整、PASS変更、レシピ設定など全アクションが記録されます
+              </p>
+            </div>
+
+            {/* ログカテゴリーフィルター */}
+            <div className="flex items-center gap-1.5 bg-stone-950 border border-stone-800 p-1 rounded-xl flex-wrap">
+              {[
+                { id: "all", label: "すべて" },
+                { id: "product", label: "商品・素材" },
+                { id: "inventory", label: "在庫調整" },
+                { id: "sale", label: "販売" },
+                { id: "craft", label: "作成" },
+                { id: "vault", label: "金庫" },
+                { id: "bonus", label: "ボーナス" },
+                { id: "role", label: "役職" },
+                { id: "user", label: "従業員・PASS" },
+                { id: "recipe", label: "レシピ・価格" },
+                { id: "auth", label: "ログイン" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setLogFilter(tab.id)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    logFilter === tab.id
+                      ? "bg-amber-600 text-white shadow-xs"
+                      : "text-stone-400 hover:text-stone-200"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ログ一覧 */}
+          <div className="divide-y divide-stone-800/80 max-h-[600px] overflow-y-auto pr-1">
+            {filteredLogs.length === 0 ? (
+              <p className="text-xs text-stone-500 py-8 text-center">該当する操作ログはありません</p>
+            ) : (
+              filteredLogs.map((log) => {
+                const badgeColor =
+                  log.category === "product"
+                    ? "bg-amber-950/80 text-amber-300 border-amber-700/60"
+                    : log.category === "inventory"
+                    ? "bg-teal-950/70 text-teal-300 border-teal-800/50"
+                    : log.category === "sale"
+                    ? "bg-rose-950/70 text-rose-300 border-rose-800/50"
+                    : log.category === "craft"
+                    ? "bg-orange-950/70 text-orange-300 border-orange-800/50"
+                    : log.category === "vault"
+                    ? "bg-yellow-500/20 text-yellow-300 border-yellow-500/40"
+                    : log.category === "bonus"
+                    ? "bg-pink-950/70 text-pink-300 border-pink-800/50"
+                    : log.category === "user"
+                    ? "bg-purple-950/70 text-purple-300 border-purple-800/50"
+                    : log.category === "role"
+                    ? "bg-indigo-950/70 text-indigo-300 border-indigo-800/50"
+                    : log.category === "recipe"
+                    ? "bg-blue-950/70 text-blue-300 border-blue-800/50"
+                    : log.category === "auth"
+                    ? "bg-emerald-950/70 text-emerald-300 border-emerald-800/50"
+                    : "bg-stone-800 text-stone-300 border-stone-700";
+
+                const categoryLabel =
+                  log.category === "product"
+                    ? "商品・素材管理"
+                    : log.category === "inventory"
+                    ? "在庫調整"
+                    : log.category === "sale"
+                    ? "販売"
+                    : log.category === "craft"
+                    ? "クラフト作成"
+                    : log.category === "vault"
+                    ? "金庫連動・調整"
+                    : log.category === "bonus"
+                    ? "ボーナス査定"
+                    : log.category === "user"
+                    ? "従業員管理"
+                    : log.category === "role"
+                    ? "役職設定"
+                    : log.category === "recipe"
+                    ? "レシピ・価格"
+                    : log.category === "auth"
+                    ? "認証"
+                    : "店舗操作";
+
+                return (
+                  <div key={log.id} className="py-3.5 flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${badgeColor}`}
+                        >
+                          {categoryLabel}
+                        </span>
+                        <h4 className="font-bold text-white text-xs">{log.title}</h4>
+                        <span className="text-xs text-stone-400">
+                          担当:{" "}
+                          <strong className="text-amber-300 font-bold bg-stone-800 border border-stone-700 px-1.5 py-0.5 rounded">
+                            {log.userName}
+                          </strong>
+                        </span>
+                      </div>
+                      <p className="text-xs text-stone-300 pl-1">{log.detail}</p>
+                    </div>
+
+                    <span className="text-[11px] text-stone-500 shrink-0 font-mono">
+                      {new Date(log.created_at).toLocaleString("ja-JP", {
+                        month: "numeric",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================
+          タブ7: ⚙️ 店舗・機能利用設定（店舗機能ルール・ブランド・店舗管理）
+      ======================================================== */}
+      {activeTab === "settings" && (
+        <div className="space-y-6">
+          {/* ====================================================
+              1. ⚙️ 店舗機能ルール & 店舗手元純残り割合
+          ==================================================== */}
+          <div className="bg-stone-900/90 rounded-3xl border border-stone-800 p-6 shadow-xl space-y-6 text-stone-100 backdrop-blur-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-800 pb-3">
+              <div>
+                <h2 className="text-base font-black text-white flex items-center gap-2">
+                  <Sliders className="w-5 h-5 text-amber-400" />
+                  ⚙️ 店舗機能ルール（クラフト作成 ＆ 在庫管理をする/しない）
+                </h2>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  店舗の運用ルールに合わせて各機能の利用ON/OFFを切り替えます
+                </p>
+              </div>
+              <span className="text-[11px] text-stone-500 font-mono">
+                ※設定は即座に販売レジ画面・サイドバーに自動反映されます
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* ① クラフト作成機能 */}
+              <div
+                className={`p-5 rounded-2xl border transition-all flex items-center justify-between gap-4 ${
+                  storeSettings.enableCrafting
+                    ? "bg-stone-950 border-emerald-500/50 shadow-xs"
+                    : "bg-stone-950/60 border-stone-800 opacity-80"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl shrink-0 ${
+                      storeSettings.enableCrafting
+                        ? "bg-emerald-950 text-emerald-400 border border-emerald-600/40"
+                        : "bg-stone-800 text-stone-500"
+                    }`}
+                  >
+                    🔨
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-extrabold text-base text-white">クラフト作成機能</span>
+                      <span
+                        className={`text-[10px] font-black px-2.5 py-0.5 rounded-full ${
+                          storeSettings.enableCrafting
+                            ? "bg-emerald-950 text-emerald-300 border border-emerald-500/50"
+                            : "bg-stone-800 text-stone-400"
+                        }`}
+                      >
+                        {storeSettings.enableCrafting ? "する (有効中)" : "しない (停止中)"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-400 mt-1 leading-relaxed">
+                      メイン画面での素材消費料理作成。「しない」に設定するとメイン画面の作成ボタンが非表示になり、販売レジ専任になります。
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateStoreSettings({ enableCrafting: !storeSettings.enableCrafting })
+                  }
+                  className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer shadow-md active:scale-95 ${
+                    storeSettings.enableCrafting
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-900/30"
+                      : "bg-stone-800 hover:bg-stone-700 text-stone-300 border border-stone-700"
+                  }`}
+                >
+                  {storeSettings.enableCrafting ? "する (有効中)" : "しない (停止中)"}
+                </button>
+              </div>
+
+              {/* ② 全体在庫管理機能 */}
+              <div
+                className={`p-5 rounded-2xl border transition-all flex items-center justify-between gap-4 ${
+                  storeSettings.enableInventory
+                    ? "bg-stone-950 border-indigo-500/50 shadow-xs"
+                    : "bg-stone-950/60 border-stone-800 opacity-80"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl shrink-0 ${
+                      storeSettings.enableInventory
+                        ? "bg-indigo-950 text-indigo-400 border border-indigo-600/40"
+                        : "bg-stone-800 text-stone-500"
+                    }`}
+                  >
+                    📦
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-extrabold text-base text-white">全体在庫管理機能</span>
+                      <span
+                        className={`text-[10px] font-black px-2.5 py-0.5 rounded-full ${
+                          storeSettings.enableInventory
+                            ? "bg-indigo-950 text-indigo-300 border border-indigo-500/50"
+                            : "bg-stone-800 text-stone-400"
+                        }`}
+                      >
+                        {storeSettings.enableInventory ? "する (有効中)" : "しない (停止中)"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-400 mt-1 leading-relaxed">
+                      全体在庫一覧メニュー。「しない」に設定するとサイドバーの一般アクセスが非表示になり、商品販売時も在庫チェック・減算をスキップして在庫がなくても販売可能になります。
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateStoreSettings({ enableInventory: !storeSettings.enableInventory })
+                  }
+                  className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer shadow-md active:scale-95 ${
+                    storeSettings.enableInventory
+                      ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-900/30"
+                      : "bg-stone-800 hover:bg-stone-700 text-stone-300 border border-stone-700"
+                  }`}
+                >
+                  {storeSettings.enableInventory ? "する (有効中)" : "しない (停止中)"}
+                </button>
+              </div>
+
+              {/* ③ 店舗手元純残りの割合設定 */}
+              <div className="p-5 rounded-2xl border border-amber-500/50 bg-stone-950 shadow-xs md:col-span-2 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800 pb-3">
+                  <div className="flex items-start gap-3">
+                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-xl shrink-0 bg-amber-950 text-amber-400 border border-amber-600/40">
+                      🏦
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-extrabold text-base text-white">
+                          店舗手元純残りの割合設定
+                        </span>
+                        <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/50">
+                          現在: {storeRate}% (店手元) / {staffIncentiveRate}% (スタッフ手渡し)
+                        </span>
+                      </div>
+                      <p className="text-xs text-stone-400 mt-1 leading-relaxed">
+                        料理販売時に売上総額から<strong>店舗（金庫）に残す割合</strong>を設定します。残りの{" "}
+                        <strong>{staffIncentiveRate}%</strong>{" "}
+                        が販売スタッフへ即時手渡しされるインセンティブとなります。ボーナスの歩合還元計算やサマリー表示にも自動連動します。
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 現在の設定値バッジ */}
+                  <div className="flex items-center gap-2 self-start sm:self-center bg-stone-900 px-4 py-2 rounded-2xl border border-stone-800 shrink-0">
+                    <span className="text-xs text-stone-400 font-bold">店舗残り:</span>
+                    <span className="text-2xl font-black text-amber-300">{storeRate}%</span>
+                  </div>
+                </div>
+
+                {/* スライダー & 数値入力 & クイック選択 */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                  <div className="md:col-span-2 space-y-2">
+                    <div className="flex items-center justify-between text-xs text-stone-400 font-bold">
+                      <span>0% (全額手渡し)</span>
+                      <span className="text-amber-400 font-black">
+                        店舗純手元 {storeRate}% ⇄ 手渡し {staffIncentiveRate}%
+                      </span>
+                      <span>100% (全額金庫入金)</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={storeRate}
+                      onChange={(e) => {
+                        const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
+                        updateStoreSettings({ storeRemainingRate: val });
+                      }}
+                      className="w-full h-2.5 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between md:justify-end gap-2">
+                    <span className="text-xs text-stone-400 font-bold">直接指定:</span>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="5"
+                        value={storeRate}
+                        onChange={(e) => {
+                          const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
+                          updateStoreSettings({ storeRemainingRate: val });
+                        }}
+                        className="w-20 px-3 py-1.5 bg-stone-900 rounded-xl border border-stone-700 font-black text-amber-300 text-center text-sm focus:border-amber-500"
+                      />
+                      <span className="text-stone-400 font-bold text-sm">%</span>
+                    </div>
+
+                    {/* クイック選択 */}
+                    <div className="flex items-center gap-1">
+                      {[50, 60, 70, 80].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => updateStoreSettings({ storeRemainingRate: rate })}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                            storeRate === rate
+                              ? "bg-amber-500 text-stone-950 shadow-xs"
+                              : "bg-stone-900 hover:bg-stone-800 text-stone-400 border border-stone-800"
+                          }`}
+                        >
+                          {rate}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ====================================================
+              2. 🎨 サイト屋号 & ブランド・テーマカラー設定 (新店舗サイト展開用)
+          ==================================================== */}
+          <div className="bg-stone-900/90 rounded-3xl border border-stone-800 p-6 shadow-xl space-y-5 text-stone-100 backdrop-blur-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className={`p-1.5 rounded-xl ${theme.accentBg} ${theme.accentText} border ${theme.accentBorder}`}>
+                    <Palette className="w-4 h-4" />
+                  </span>
+                  <h2 className="text-base font-black text-white">
+                    🎨 サイト屋号 &amp; ブランド・テーマカラー設定
+                  </h2>
+                </div>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  別店舗用の新サイトとして運用する際や、サイト全体の看板・ロゴ・テーマ色を一括変更できます
+                </p>
+              </div>
+
+              {brandSavedNotice && (
+                <div className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 animate-bounce">
+                  <Check className="w-4 h-4 text-emerald-400" />
+                  <span>屋号・ブランド設定を保存しました！</span>
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleSaveBranding} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-stone-300 mb-1">
+                    サイト屋号 (全体の店名):
+                  </label>
+                  <input
+                    type="text"
+                    value={brandSiteName}
+                    onChange={(e) => setBrandSiteName(e.target.value)}
+                    placeholder="例: 和食さくら, Cafe & Bar XX"
+                    className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs font-bold text-white focus:border-amber-500"
+                    required
+                  />
+                  <span className="text-[10px] text-stone-500 mt-0.5 block">
+                    ※ヘッダー・サイドバー・ログイン画面のメイン店名になります
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-300 mb-1">
+                    サブタイトル (キャッチコピー):
+                  </label>
+                  <input
+                    type="text"
+                    value={brandSiteSubtitle}
+                    onChange={(e) => setBrandSiteSubtitle(e.target.value)}
+                    placeholder="例: 店舗管理・売上クラフトシステム"
+                    className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs text-white focus:border-amber-500"
+                  />
+                  <span className="text-[10px] text-stone-500 mt-0.5 block">
+                    ※ログイン画面やサイドバー下に小さく表示されます
+                  </span>
+                </div>
+              </div>
+
+              {/* サイトロゴ画像アップローダー（商品画像と同じ仕様） */}
+              <div>
+                <ImageUploader
+                  label="サイトロゴ画像 (画像ファイルを選択・ドラッグ＆ドロップでアップロード)"
+                  currentImageUrl={brandLogoUrl}
+                  onImageUploaded={(url) => setBrandLogoUrl(url)}
+                  dark={true}
+                />
+              </div>
+
+              {/* テーマカラー選択パレット */}
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1.5">
+                  メインテーマカラー (アクセント調):
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                  {[
+                    { id: "amber", name: "琥珀ゴールド", desc: "和風・料亭・シック", bg: "bg-amber-600", border: "border-amber-500" },
+                    { id: "rose", name: "桜・深紅", desc: "和モダン・華やか", bg: "bg-rose-600", border: "border-rose-500" },
+                    { id: "emerald", name: "翡翠グリーン", desc: "茶屋・自然・オーガニック", bg: "bg-emerald-600", border: "border-emerald-500" },
+                    { id: "blue", name: "藍ネイビー", desc: "バー・クール・海鮮", bg: "bg-blue-600", border: "border-blue-500" },
+                    { id: "purple", name: "紫陽花パープル", desc: "高級・イタリアン・妖艶", bg: "bg-purple-600", border: "border-purple-500" },
+                    { id: "stone", name: "漆黒モノトーン", desc: "無骨・シンプル・モダン", bg: "bg-stone-600", border: "border-stone-500" },
+                  ].map((color) => (
+                    <button
+                      key={color.id}
+                      type="button"
+                      onClick={() => setBrandThemeColor(color.id)}
+                      className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                        brandThemeColor === color.id
+                          ? `${color.bg}/20 ${color.border} ring-2 ring-white/20 shadow-md scale-[1.02]`
+                          : "bg-stone-950 border-stone-800 hover:border-stone-700"
+                      }`}
+                    >
+                      <span className={`w-4 h-4 rounded-full ${color.bg} shrink-0`} />
+                      <div className="min-w-0">
+                        <div className="text-xs font-black text-white truncate">{color.name}</div>
+                        <div className="text-[9px] text-stone-400 truncate">{color.desc}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="submit"
+                  className={`px-6 py-2.5 rounded-xl ${theme.primaryBtn} text-xs flex items-center gap-2 cursor-pointer transition-all active:scale-95`}
+                >
+                  <Save className="w-4 h-4" />
+                  屋号 &amp; ブランド設定を保存する
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* ====================================================
+              3. 🏪 運営店舗（ショップ）の管理 (追加・編集・削除)
+          ==================================================== */}
+          <div className="bg-stone-900/90 rounded-3xl border border-stone-800 p-6 shadow-xl space-y-5 text-stone-100 backdrop-blur-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                    <Store className="w-4 h-4" />
+                  </span>
+                  <h2 className="text-base font-black text-white">
+                    🏪 運営店舗（ショップ）の追加・編集・削除
+                  </h2>
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-stone-800 text-stone-300">
+                    {shops.length}店舗
+                  </span>
+                </div>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  サイト内で管理する店舗を追加したり、店名・アイコン・テーマ色を変更・削除できます
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsAddShopModalOpen(true)}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 text-xs font-black flex items-center gap-1.5 shadow-md shadow-amber-950/40 cursor-pointer transition-all active:scale-95 shrink-0 self-start sm:self-center"
+              >
+                <Plus className="w-4 h-4" />
+                新規店舗を追加する
+              </button>
+            </div>
+
+            {/* 店舗一覧カード */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {shops.map((shop) => {
+                const isEditing = editingShopId === shop.id;
+                const shopProdCount = items.filter(
+                  (i) => i.type === "product" && (i.shopId || shops[0]?.id) === shop.id
+                ).length;
+
+                return (
+                  <div
+                    key={shop.id}
+                    className={`p-4 rounded-2xl border transition-all ${
+                      isEditing
+                        ? "bg-stone-950 border-amber-500 ring-2 ring-amber-500/30"
+                        : "bg-stone-950/70 border-stone-800 hover:border-stone-700"
+                    }`}
+                  >
+                    {!isEditing ? (
+                      <div className="space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-10 h-10 rounded-xl bg-stone-900 border border-stone-700 text-2xl flex items-center justify-center shrink-0">
+                              {shop.icon}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-black text-white text-sm truncate flex items-center gap-1.5">
+                                <span>{shop.name}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 text-[10px] text-stone-400 mt-0.5">
+                                <span className="font-mono px-1.5 py-0.2 rounded bg-stone-800 text-stone-300">
+                                  ID: {shop.id}
+                                </span>
+                                <span>略称: {shop.shortName}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-stone-800 text-amber-300 border border-stone-700 shrink-0">
+                            料理 {shopProdCount} 品
+                          </span>
+                        </div>
+
+                        {shop.description && (
+                          <p className="text-xs text-stone-400 leading-relaxed bg-stone-900/60 p-2 rounded-xl">
+                            {shop.description}
+                          </p>
+                        )}
+
+                        <div className="pt-2 border-t border-stone-800 flex items-center justify-between text-xs">
+                          <span className="text-[10px] text-stone-500">
+                            テーマ: {shop.themeColor || "amber"}
+                          </span>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditShop(shop)}
+                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <Edit2 className="w-3 h-3 text-amber-400" />
+                              編集
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteShopClick(shop)}
+                              disabled={shops.length <= 1}
+                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-rose-950/50 hover:text-rose-400 text-stone-400 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                              title={shops.length <= 1 ? "店舗は最低1つ必要です" : "店舗を削除"}
+                            >
+                              <Trash2 className="w-3 h-3 text-rose-400" />
+                              削除
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      /* 店舗編集フォーム */
+                      <div className="space-y-3">
+                        <div className="text-xs font-black text-amber-400 flex items-center justify-between border-b border-stone-800 pb-2">
+                          <span>店舗情報の変更</span>
+                          <button
+                            type="button"
+                            onClick={() => setEditingShopId(null)}
+                            className="text-stone-400 hover:text-white"
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-stone-300 mb-0.5">
+                            店舗名:
+                          </label>
+                          <input
+                            type="text"
+                            value={editShopName}
+                            onChange={(e) => setEditShopName(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-stone-900 rounded-lg border border-stone-700 text-xs font-bold text-white focus:border-amber-500"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-300 mb-0.5">
+                              略称:
+                            </label>
+                            <input
+                              type="text"
+                              value={editShopShortName}
+                              onChange={(e) => setEditShopShortName(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-stone-900 rounded-lg border border-stone-700 text-xs text-white focus:border-amber-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-300 mb-0.5">
+                              アイコン絵文字:
+                            </label>
+                            <input
+                              type="text"
+                              value={editShopIcon}
+                              onChange={(e) => setEditShopIcon(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-stone-900 rounded-lg border border-stone-700 text-xs text-center text-white focus:border-amber-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-stone-300 mb-0.5">
+                            テーマカラー:
+                          </label>
+                          <select
+                            value={editShopThemeColor}
+                            onChange={(e) => setEditShopThemeColor(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-stone-900 rounded-lg border border-stone-700 text-xs font-bold text-white focus:border-amber-500 cursor-pointer"
+                          >
+                            <option value="amber">琥珀ゴールド (amber)</option>
+                            <option value="rose">桜ローズ (rose)</option>
+                            <option value="emerald">翡翠グリーン (emerald)</option>
+                            <option value="blue">藍ネイビー (blue)</option>
+                            <option value="purple">紫陽花パープル (purple)</option>
+                            <option value="stone">漆黒モノトーン (stone)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-stone-300 mb-0.5">
+                            説明:
+                          </label>
+                          <input
+                            type="text"
+                            value={editShopDesc}
+                            onChange={(e) => setEditShopDesc(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-stone-900 rounded-lg border border-stone-700 text-xs text-stone-300 focus:border-amber-500"
+                          />
+                        </div>
+
+                        <div className="pt-2 flex items-center justify-end gap-2 border-t border-stone-800">
+                          <button
+                            type="button"
+                            onClick={() => setEditingShopId(null)}
+                            className="px-3 py-1 rounded-lg bg-stone-800 text-stone-400 text-xs font-bold hover:text-white"
+                          >
+                            キャンセル
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveEditShop(shop.id)}
+                            className="px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-stone-950 text-xs font-black shadow-xs"
+                          >
+                            保存
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ====================================================
+              3.5 📁 商品カテゴリー管理（表示順・並び替え）
+          ==================================================== */}
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-stone-800">
+              <div>
+                <h3 className="text-sm font-black text-white flex items-center gap-2">
+                  <Folder className="w-4 h-4 text-amber-400" />
+                  商品カテゴリー管理（表示順・並び替え）
+                </h3>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  売上画面やクラフト画面での商品・素材の表示順序をカテゴリーの順番番号（#1, #2...）順に並べ替えます。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewCatOrder(categories.length + 1);
+                  setIsAddCatModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs rounded-xl shadow-xs transition-colors shrink-0 cursor-pointer"
+              >
+                <FolderPlus className="w-3.5 h-3.5" />
+                新規カテゴリー追加
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {categories.map((cat, index) => {
+                const isEditing = editingCatId === cat.id;
+
+                return (
+                  <div
+                    key={cat.id}
+                    className="p-3.5 rounded-xl border border-stone-800 bg-stone-950/60 flex flex-col justify-between gap-2.5 transition-colors hover:border-stone-700"
+                  >
+                    {!isEditing ? (
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-black">
+                              #{cat.order}
+                            </span>
+                            <span className="text-base">{cat.icon || "📁"}</span>
+                            <span className="text-sm font-bold text-white">{cat.name}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {/* 順序入れ替えボタン ▲ ▼ */}
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              onClick={() => {
+                                if (index > 0) {
+                                  const prevCat = categories[index - 1];
+                                  const currentOrder = cat.order;
+                                  const prevOrder = prevCat.order;
+                                  updateCategory(cat.id, { order: prevOrder === currentOrder ? currentOrder - 1 : prevOrder });
+                                  updateCategory(prevCat.id, { order: currentOrder });
+                                }
+                              }}
+                              className="px-1.5 py-0.5 text-[10px] bg-stone-800 hover:bg-stone-700 disabled:opacity-30 disabled:pointer-events-none text-stone-300 rounded cursor-pointer"
+                              title="上へ"
+                            >
+                              ▲
+                            </button>
+                            <button
+                              type="button"
+                              disabled={index === categories.length - 1}
+                              onClick={() => {
+                                if (index < categories.length - 1) {
+                                  const nextCat = categories[index + 1];
+                                  const currentOrder = cat.order;
+                                  const nextOrder = nextCat.order;
+                                  updateCategory(cat.id, { order: nextOrder === currentOrder ? currentOrder + 1 : nextOrder });
+                                  updateCategory(nextCat.id, { order: currentOrder });
+                                }
+                              }}
+                              className="px-1.5 py-0.5 text-[10px] bg-stone-800 hover:bg-stone-700 disabled:opacity-30 disabled:pointer-events-none text-stone-300 rounded cursor-pointer"
+                              title="下へ"
+                            >
+                              ▼
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-stone-800/80 text-xs">
+                          <span className="text-[11px] text-stone-400">
+                            表示順番号: <strong className="text-amber-300">{cat.order}</strong>
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditCategory(cat)}
+                              className="px-2 py-0.5 rounded bg-stone-800 hover:bg-stone-700 text-stone-300 text-[11px] font-bold cursor-pointer"
+                            >
+                              編集
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCategoryClick(cat)}
+                              className="px-2 py-0.5 rounded bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 text-[11px] font-bold cursor-pointer"
+                            >
+                              削除
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="col-span-2">
+                            <label className="block text-[10px] font-bold text-stone-400 mb-0.5">カテゴリ名:</label>
+                            <input
+                              type="text"
+                              value={editCatName}
+                              onChange={(e) => setEditCatName(e.target.value)}
+                              className="w-full px-2 py-1 bg-stone-900 rounded-lg border border-stone-700 text-xs text-white focus:border-amber-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-400 mb-0.5">アイコン:</label>
+                            <input
+                              type="text"
+                              value={editCatIcon}
+                              onChange={(e) => setEditCatIcon(e.target.value)}
+                              className="w-full px-2 py-1 bg-stone-900 rounded-lg border border-stone-700 text-xs text-white text-center focus:border-amber-500"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-stone-400 mb-0.5">表示順番号 (小さいほど上):</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={editCatOrder}
+                            onChange={(e) => setEditCatOrder(parseInt(e.target.value) || 1)}
+                            className="w-full px-2 py-1 bg-stone-900 rounded-lg border border-stone-700 text-xs text-white focus:border-amber-500"
+                          />
+                        </div>
+                        <div className="flex items-center justify-end gap-1.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setEditingCatId(null)}
+                            className="px-2.5 py-1 rounded-lg bg-stone-800 text-stone-400 text-xs font-bold hover:text-white cursor-pointer"
+                          >
+                            キャンセル
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveCategoryEdit(cat.id)}
+                            className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-stone-950 text-xs font-black shadow-xs cursor-pointer"
+                          >
+                            保存
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ====================================================
+              4. 📁 新規カテゴリー追加モーダル
+          ==================================================== */}
+          {isAddCatModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+              <div className="bg-stone-900 rounded-3xl p-6 max-w-md w-full shadow-2xl border border-stone-800 text-white space-y-4">
+                <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+                  <h2 className="text-base font-black text-white flex items-center gap-2">
+                    <FolderPlus className="w-5 h-5 text-amber-400" />
+                    新しい商品カテゴリーを追加
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddCatModalOpen(false)}
+                    className="text-stone-400 hover:text-white p-1 rounded-lg hover:bg-stone-800 transition-colors cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleAddCategorySubmit} className="space-y-3.5">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-300 mb-1">
+                      カテゴリー名:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="例: 肉料理、刺身、特製甘味"
+                      value={newCatName}
+                      onChange={(e) => setNewCatName(e.target.value)}
+                      className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-sm text-white placeholder:text-stone-600 focus:border-amber-500"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-stone-300 mb-1">
+                        表示順番号 (小さいほど上):
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={newCatOrder}
+                        onChange={(e) => setNewCatOrder(parseInt(e.target.value) || 1)}
+                        className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-sm font-black text-amber-400 focus:border-amber-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-stone-300 mb-1">
+                        絵文字アイコン:
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="例: 🍱, 🍵, 🍡, 🥩"
+                        value={newCatIcon}
+                        onChange={(e) => setNewCatIcon(e.target.value)}
+                        className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-sm text-center text-white focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1 flex-wrap">
+                    <span className="text-[11px] text-stone-400">クイックアイコン候補:</span>
+                    {["🍱", "🍵", "🍡", "🍣", "🥩", "🍶", "🍺", "🍧", "📦", "✨"].map((icon) => (
+                      <button
+                        key={icon}
+                        type="button"
+                        onClick={() => setNewCatIcon(icon)}
+                        className="px-2 py-1 text-sm bg-stone-800 hover:bg-stone-700 rounded-lg transition-colors cursor-pointer"
+                      >
+                        {icon}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-stone-300 mb-1">
+                      カテゴリーカラー:
+                    </label>
+                    <div className="flex items-center gap-2">
+                      {[
+                        { id: "amber", label: "山吹 (amber)", bg: "bg-amber-500" },
+                        { id: "rose", label: "桜 (rose)", bg: "bg-rose-500" },
+                        { id: "emerald", label: "抹茶 (emerald)", bg: "bg-emerald-500" },
+                        { id: "blue", label: "藍 (blue)", bg: "bg-blue-500" },
+                        { id: "purple", label: "藤 (purple)", bg: "bg-purple-500" },
+                        { id: "stone", label: "墨 (stone)", bg: "bg-stone-500" },
+                      ].map((col) => (
+                        <button
+                          key={col.id}
+                          type="button"
+                          onClick={() => setNewCatColor(col.id)}
+                          className={`w-7 h-7 rounded-full ${col.bg} transition-all cursor-pointer ${
+                            newCatColor === col.id ? "ring-2 ring-white ring-offset-2 ring-offset-stone-900 scale-110" : "opacity-70 hover:opacity-100"
+                          }`}
+                          title={col.label}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3 border-t border-stone-800">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddCatModalOpen(false)}
+                      className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-xs cursor-pointer"
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs shadow-md cursor-pointer"
+                    >
+                      カテゴリーを追加
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* ====================================================
+              5. 🏪 新規店舗追加モーダル
+          ==================================================== */}
+          {isAddShopModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+              <div className="bg-stone-900 rounded-3xl p-6 max-w-md w-full shadow-2xl border border-stone-800 text-white space-y-4">
+                <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+                  <h2 className="text-base font-black text-white flex items-center gap-2">
+                    <Store className="w-5 h-5 text-amber-400" />
+                    新しい運営店舗を追加
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddShopModalOpen(false)}
+                    className="text-stone-400 hover:text-white p-1 rounded-lg hover:bg-stone-800 transition-colors cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleAddShopSubmit} className="space-y-3.5">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-300 mb-1">
+                      店舗名 (正式名称):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="例: BAR さくら, カフェ・オ・レ, 焼肉 炎"
+                      value={newShopName}
+                      onChange={(e) => setNewShopName(e.target.value)}
+                      className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs font-bold text-white focus:border-amber-500"
+                      required
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-xs font-bold text-stone-300 mb-1">
+                        略称 (タブ表示用):
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="例: BAR, カフェ, 焼肉"
+                        value={newShopShortName}
+                        onChange={(e) => setNewShopShortName(e.target.value)}
+                        className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs text-white focus:border-amber-500"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-stone-300 mb-1">
+                        アイコン絵文字:
+                      </label>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={newShopIcon}
+                          onChange={(e) => setNewShopIcon(e.target.value)}
+                          className="w-14 px-2 py-2 bg-stone-950 rounded-xl border border-stone-700 text-sm text-center text-white focus:border-amber-500"
+                          required
+                        />
+                        {/* クイック絵文字パレット */}
+                        <div className="flex-1 flex gap-1 items-center overflow-x-auto">
+                          {["🍸", "☕", "🍺", "🍣", "🥩", "🍰", "🍷", "🌸"].map((emoji) => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={() => setNewShopIcon(emoji)}
+                              className="w-7 h-7 rounded-lg bg-stone-800 hover:bg-stone-700 text-xs flex items-center justify-center shrink-0 cursor-pointer"
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-stone-300 mb-1">
+                      テーマ色:
+                    </label>
+                    <select
+                      value={newShopThemeColor}
+                      onChange={(e) => setNewShopThemeColor(e.target.value)}
+                      className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs font-bold text-white focus:border-amber-500 cursor-pointer"
+                    >
+                      <option value="amber">琥珀ゴールド (amber)</option>
+                      <option value="rose">桜ローズ (rose)</option>
+                      <option value="emerald">翡翠グリーン (emerald)</option>
+                      <option value="blue">藍ネイビー (blue)</option>
+                      <option value="purple">紫陽花パープル (purple)</option>
+                      <option value="stone">漆黒モノトーン (stone)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-stone-300 mb-1">
+                      説明・取扱商品（任意）:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="例: 夜営業のカクテル＆おつまみ"
+                      value={newShopDesc}
+                      onChange={(e) => setNewShopDesc(e.target.value)}
+                      className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs text-stone-300 focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-end gap-2 border-t border-stone-800">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddShopModalOpen(false)}
+                      className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold cursor-pointer"
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 text-xs font-black shadow-md flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      店舗を追加する
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================
+          🏛️ ゲーム内金庫残高 手動調整モーダル
+      ======================================================== */}
+      {isVaultModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-stone-900 rounded-3xl p-6 max-w-md w-full shadow-2xl border border-stone-800 text-white space-y-4">
+            <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+              <h2 className="text-base font-black text-white flex items-center gap-2">
+                <Landmark className="w-5 h-5 text-amber-400" />
+                ゲーム内金庫残高の手動調整
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsVaultModalOpen(false)}
+                className="text-stone-400 hover:text-white p-1 rounded-lg hover:bg-stone-800 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-stone-400">
+              ゲーム内の金庫実数に合わせて金額を入力してください。
+              （日々の売上やボーナス支払いは自動で加算・減算されます）
+            </p>
+
+            <form onSubmit={handleSaveVaultBalance} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  新しい金庫残高 (¥):
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-2.5 text-stone-400 font-bold text-sm">¥</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={vaultInput === 0 ? "" : vaultInput}
+                    onChange={(e) => setVaultInput(parseInt(e.target.value, 10) || 0)}
+                    placeholder="0"
+                    className="w-full pl-8 pr-3 py-2.5 bg-stone-950 rounded-xl border border-stone-700 font-black text-xl text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500 tracking-wide"
+                    required
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {/* クイック加算・設定ボタン */}
+              <div>
+                <span className="text-[11px] font-bold text-stone-400 block mb-1">クイック加算 / 操作:</span>
+                <div className="flex gap-1.5 flex-wrap">
+                  {[100000, 500000, 1000000, 5000000].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setVaultInput((prev) => prev + amt)}
+                      className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-stone-700 text-xs font-bold text-stone-300 hover:text-amber-300 cursor-pointer transition-colors"
+                    >
+                      +{formatCurrency(amt)}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setVaultInput(0)}
+                    className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-rose-950/40 border border-stone-700 text-xs font-bold text-stone-400 hover:text-rose-400 cursor-pointer transition-colors"
+                  >
+                    リセット (¥0)
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1">
+                  調整理由・メモ:
+                </label>
+                <input
+                  type="text"
+                  placeholder="例: ゲーム内金庫と同期、臨時出資、機材購入など"
+                  value={vaultReason}
+                  onChange={(e) => setVaultReason(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs text-stone-200 focus:outline-none focus:ring-2 focus:ring-amber-500 placeholder-stone-500"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-stone-800">
+                <button
+                  type="button"
+                  onClick={() => setIsVaultModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold cursor-pointer"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black shadow-md shadow-amber-950/40 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  金庫残高を更新する
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
