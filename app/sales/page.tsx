@@ -207,7 +207,13 @@ export default function SalesPage() {
       const staffName = sale.staffName || sale.staff_name || "店員";
       const amount = sale.totalAmount ?? sale.total_amount ?? 0;
       const isBV = sale.shopId === "buon_viaggio";
-      const itemsCount = (sale.items || []).reduce((sum, it) => sum + it.quantity, 0);
+      let itemsCount = (sale.items || []).reduce((sum, it) => sum + it.quantity, 0);
+      const myShare = sale.multiStaffAssignment?.staffShares?.find(
+        (sh) => sh.userId === sale.staffUserId || sh.staffName === staffName
+      );
+      if (myShare?.items && Object.keys(myShare.items).length > 0) {
+        itemsCount = Object.values(myShare.items).reduce((sum, q) => sum + q, 0);
+      }
 
       if (!staffMap[staffName]) {
         staffMap[staffName] = {
@@ -939,19 +945,39 @@ export default function SalesPage() {
                       </span>
                     </div>
 
-                    {/* 販売明細商品 */}
+                    {/* 販売明細商品（出張修理分担時は各自の担当個数を表示） */}
                     <div className="flex flex-wrap gap-1.5 mt-2.5">
-                      {(sale.items || []).map((it, idx) => (
-                        <span
-                          key={idx}
-                          className="px-2.5 py-1 rounded-xl bg-stone-900 border border-stone-800 text-[11px] font-semibold text-stone-300"
-                        >
-                          {it.itemName || it.item_name}{" "}
-                          <strong className="text-amber-400 font-bold">
-                            ×{it.quantity}
-                          </strong>
-                        </span>
-                      ))}
+                      {(() => {
+                        const myShare = sale.multiStaffAssignment?.staffShares?.find(
+                          (sh) => sh.userId === sale.staffUserId || sh.staffName === (sale.staffName || sale.staff_name)
+                        );
+                        let displayItems = sale.items || [];
+                        if (myShare?.items && Object.keys(myShare.items).length > 0) {
+                          displayItems = Object.entries(myShare.items)
+                            .filter(([, q]) => q > 0)
+                            .map(([itemId, q]) => {
+                              const found = items.find((i) => i.id === itemId);
+                              return {
+                                itemId,
+                                itemName: found ? found.name : "商品",
+                                quantity: q,
+                                unitPrice: found ? found.selling_price : 0,
+                                subtotal: (found ? found.selling_price : 0) * q,
+                              };
+                            });
+                        }
+                        return displayItems.map((it, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2.5 py-1 rounded-xl bg-stone-900 border border-stone-800 text-[11px] font-semibold text-stone-300"
+                          >
+                            {it.itemName || it.item_name}{" "}
+                            <strong className="text-amber-400 font-bold">
+                              ×{it.quantity}
+                            </strong>
+                          </span>
+                        ));
+                      })()}
                     </div>
 
                     {sale.notes && (

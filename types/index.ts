@@ -141,6 +141,7 @@ export interface StaffWorkShare {
   workCount: number;         // 担当した修理箇所数/台数 (例: 2箇所)
   shareRate: number;         // 按分割合 (0.0 〜 1.0)
   allocatedAmount: number;   // 按分された売上金額 (¥)
+  items?: Record<string, number>; // 各スタッフが担当したアイテムIDと個数のマップ
 }
 
 export interface MultiStaffAssignment {

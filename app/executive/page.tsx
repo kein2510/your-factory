@@ -1632,15 +1632,10 @@ export default function ExecutivePage() {
 
         filteredSales.forEach((s) => {
           const amt = s.totalAmount ?? s.total_amount ?? 0;
-          if (s.storeRemainingAmount !== undefined && s.staffIncentiveAmount !== undefined) {
-            totalStoreRemaining += s.storeRemainingAmount;
-            totalIncentive += s.staffIncentiveAmount;
-          } else {
-            const rate = s.storeRemainingRate ?? 70;
-            const rem = Math.round(amt * (rate / 100));
-            totalStoreRemaining += rem;
-            totalIncentive += amt - rem;
-          }
+          const rate = storeRate;
+          const rem = Math.round(amt * (rate / 100));
+          totalStoreRemaining += rem;
+          totalIncentive += amt - rem;
         });
 
         // クラフト仕込みログ集計
@@ -1723,10 +1718,15 @@ export default function ExecutivePage() {
             .filter((s) => s.shopId === "buon_viaggio")
             .reduce((sum, s) => sum + (s.totalAmount ?? s.total_amount ?? 0), 0);
           const salesCount = userSales.length;
-          const itemsSold = userSales.reduce(
-            (sum, s) => sum + (s.items || []).reduce((iSum, it) => iSum + (it.quantity || 0), 0),
-            0
-          );
+          const itemsSold = userSales.reduce((sum, s) => {
+            const myShare = s.multiStaffAssignment?.staffShares?.find(
+              (sh) => sh.userId === u.id || sh.staffName === u.displayName
+            );
+            if (myShare?.items && Object.keys(myShare.items).length > 0) {
+              return sum + Object.values(myShare.items).reduce((qSum, q) => qSum + q, 0);
+            }
+            return sum + (s.items || []).reduce((iSum, it) => iSum + (it.quantity || 0), 0);
+          }, 0);
           const avgOrder = salesCount > 0 ? Math.round(salesAmount / salesCount) : 0;
 
           let storeRemaining = 0;
@@ -1735,15 +1735,10 @@ export default function ExecutivePage() {
           let discountCount = 0;
           userSales.forEach((s) => {
             const amt = s.totalAmount ?? s.total_amount ?? 0;
-            if (s.storeRemainingAmount !== undefined && s.staffIncentiveAmount !== undefined) {
-              storeRemaining += s.storeRemainingAmount;
-              incentive += s.staffIncentiveAmount;
-            } else {
-              const rate = s.storeRemainingRate ?? 70;
-              const rem = Math.round(amt * (rate / 100));
-              storeRemaining += rem;
-              incentive += amt - rem;
-            }
+            const rate = storeRate;
+            const rem = Math.round(amt * (rate / 100));
+            storeRemaining += rem;
+            incentive += amt - rem;
             const disc = s.discountAmount ?? 0;
             if (disc > 0) {
               discountAmount += disc;
@@ -2346,8 +2341,8 @@ export default function ExecutivePage() {
                         <th className="py-2.5 px-3 text-right">料理仕込み</th>
                         <th className="py-2.5 px-3 text-right">素材調達</th>
                         <th className="py-2.5 px-3 text-right">値引き実績</th>
-                        <th className="py-2.5 px-3 text-right">純残り貢献 (70%)</th>
-                        <th className="py-2.5 px-3 text-right">手渡し受取 (30%)</th>
+                        <th className="py-2.5 px-3 text-right">純残り貢献 ({storeRate}%)</th>
+                        <th className="py-2.5 px-3 text-right">手渡し受取 ({staffIncentiveRate}%)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-800/60 font-medium">

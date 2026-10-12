@@ -8,6 +8,7 @@ import {
   Item,
   RecipeRequirement,
   Sale,
+  SaleItem,
   MultiStaffAssignment,
   ActionLog,
   ActionCategory,
@@ -1655,8 +1656,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             itemsSold += staffItems;
             shopItemsSold[sShopId] = (shopItemsSold[sShopId] || 0) + staffItems;
 
-            // 店舗純残り & インセンティブも按分比率で計算
-            const remRate = s.storeRemainingRate ?? 70;
+            // 店舗純残り & インセンティブも按分比率で計算 (店舗設定の最新割合を優先連動)
+            const remRate = storeSettings.storeRemainingRate ?? s.storeRemainingRate ?? 70;
             const rem = Math.round(staffAmt * (remRate / 100));
             storeRemaining70 += rem;
             incentive30 += (staffAmt - rem);
@@ -1672,15 +1673,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             itemsSold += sItemsCount;
             shopItemsSold[sShopId] = (shopItemsSold[sShopId] || 0) + sItemsCount;
 
-            if (s.storeRemainingAmount !== undefined && s.staffIncentiveAmount !== undefined) {
-              storeRemaining70 += s.storeRemainingAmount;
-              incentive30 += s.staffIncentiveAmount;
-            } else {
-              const rate = s.storeRemainingRate ?? 70;
-              const rem = Math.round(amt * (rate / 100));
-              storeRemaining70 += rem;
-              incentive30 += (amt - rem);
-            }
+            const effectiveRate = storeSettings.storeRemainingRate ?? s.storeRemainingRate ?? 70;
+            const rem = Math.round(amt * (effectiveRate / 100));
+            storeRemaining70 += rem;
+            incentive30 += (amt - rem);
           }
         }
       });
@@ -1840,9 +1836,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const spSales = weekSales.filter((s) => (s.shopId || shops[0]?.id || "sakura") === sp.id);
       const spSalesTotal = spSales.reduce((sum, s) => sum + (s.totalAmount ?? s.total_amount ?? 0), 0);
       const spStoreRemaining = spSales.reduce((sum, s) => {
-        if (s.storeRemainingAmount !== undefined) return sum + s.storeRemainingAmount;
         const amt = s.totalAmount ?? s.total_amount ?? 0;
-        const rate = s.storeRemainingRate ?? 70;
+        const rate = storeSettings.storeRemainingRate ?? s.storeRemainingRate ?? 70;
         return sum + Math.round(amt * (rate / 100));
       }, 0);
       const spIncentive = spSalesTotal - spStoreRemaining;
@@ -2286,6 +2281,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           ? `【👥 出張修理分担】${sh.staffName} 担当分 (¥${sh.allocatedAmount.toLocaleString()}) / 全体 ¥${finalSaleAmount.toLocaleString()} / 参加: ${multiStaffNames} ${discountNote}`
           : `【👥 出張修理分担】${sh.staffName} 担当分 (¥${sh.allocatedAmount.toLocaleString()}) / 全体 ¥${finalSaleAmount.toLocaleString()} / 参加: ${multiStaffNames}`;
 
+        // このスタッフ個人の担当アイテムのみを抽出
+        let individualItems: SaleItem[] = [];
+        if (sh.items && Object.keys(sh.items).length > 0) {
+          individualItems = Object.entries(sh.items)
+            .filter(([, q]) => q > 0)
+            .map(([itemId, q]) => {
+              const matchedItem = items.find((i) => i.id === itemId);
+              const uPrice = matchedItem ? matchedItem.selling_price : 0;
+              return {
+                itemId,
+                itemName: matchedItem ? matchedItem.name : "商品",
+                quantity: q,
+                unitPrice: uPrice,
+                subtotal: uPrice * q,
+              };
+            });
+        }
+
+        // もし個別アイテム指定が空の場合は、全体の saleItemsList から shareRate に応じて按分
+        if (individualItems.length === 0) {
+          individualItems = saleItemsList.map((it) => {
+            const indQty = Math.max(1, Math.round(it.quantity * sh.shareRate));
+            return {
+              ...it,
+              quantity: indQty,
+              subtotal: Math.round(it.subtotal * sh.shareRate),
+            };
+          });
+        }
+
         return {
           id: `${baseSaleId}-${idx + 1}`,
           shopId: finalShopId,
@@ -2298,7 +2323,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           discountReason: discountReason?.trim() || undefined,
           staff_name: sh.staffName,
           notes: staffNotes,
-          items: saleItemsList,
+          items: individualItems,
           created_at: new Date(Date.now() + idx).toISOString(),
           multiStaffAssignment: multiStaffAssignment,
           storeRemainingRate: storeRemainingPercent,
