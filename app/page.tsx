@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   ShoppingBag,
   Hammer,
@@ -19,6 +19,9 @@ import {
   Wrench,
   UserPlus,
   Trash2,
+  Search,
+  Check,
+  X,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { formatCurrency } from "@/lib/utils";
@@ -28,7 +31,8 @@ import { supabase } from "@/lib/supabase";
 interface StaffAssignmentInput {
   userId: string;
   staffName: string;
-  workCount: number; // 担当箇所数
+  workCount?: number; // 担当箇所数 / 点数
+  items?: Record<string, number>; // { [itemId: string]: quantity } 各自が担当した商品と個数
 }
 
 export default function MainPage() {
@@ -79,15 +83,30 @@ export default function MainPage() {
 
   // 👥 複数人共同作業（出張修理など）ステート
   const [totalWorkCount, setTotalWorkCount] = useState<number>(1);
-  const [workLocations, setWorkLocations] = useState<string>("");
+  const [workLocations, setWorkLocations] = useState<string>(""); // メモ欄はUI非表示
   const [staffAssignments, setStaffAssignments] = useState<StaffAssignmentInput[]>([]);
   const [sharedDraftNotice, setSharedDraftNotice] = useState<string | null>(null);
+
+  // スタッフ追加モーダル開閉ステート
+  const [isStaffModalOpen, setIsStaffModalOpen] = useState<boolean>(false);
+  const [staffSearchQuery, setStaffSearchQuery] = useState<string>("");
+
+  // 端末・セッション一意のクライアントID（自分自身のRealtimeエコーバックによる数値巻き戻りを防ぐ）
+  const clientIdRef = useRef<string>("");
+  if (!clientIdRef.current) {
+    clientIdRef.current =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `client_${Date.now()}_${Math.random()}`;
+  }
+  // 手元での最新編集タイムスタンプ（入力中のリモート上書きを防ぐ）
+  const lastLocalEditTimeRef = useRef<number>(0);
 
   // ログインユーザーが変わった時、または初期化時に自身をデフォルト設定
   useEffect(() => {
     if (currentUser && staffAssignments.length === 0) {
       setStaffAssignments([
-        { userId: currentUser.id, staffName: currentUser.displayName, workCount: 1 },
+        { userId: currentUser.id, staffName: currentUser.displayName, workCount: 1, items: {} },
       ]);
     }
   }, [currentUser, staffAssignments.length]);
@@ -139,7 +158,7 @@ export default function MainPage() {
             if (Array.isArray(val.staffAssignments) && val.staffAssignments.length > 0) {
               setStaffAssignments(val.staffAssignments);
             } else if (currentUser) {
-              setStaffAssignments([{ userId: currentUser.id, staffName: currentUser.displayName, workCount: 1 }]);
+              setStaffAssignments([{ userId: currentUser.id, staffName: currentUser.displayName, workCount: 1, items: {} }]);
             }
             if (typeof val.discountAmount === "number") {
               setDiscountAmount(val.discountAmount);
@@ -194,6 +213,7 @@ export default function MainPage() {
         try {
           const payload = {
             shopId: selectedShopId,
+            clientId: clientIdRef.current, // 自身のクライアントID
             quantities,
             totalWorkCount,
             workLocations,
@@ -325,6 +345,7 @@ export default function MainPage() {
           const row = payload.new as { key?: string; value?: unknown };
           if (row?.key === cloudDraftKey && isMultiStaffShop) {
             const val = row.value as {
+              clientId?: string;
               quantities?: { [itemId: string]: number };
               totalWorkCount?: number;
               workLocations?: string;
@@ -333,7 +354,17 @@ export default function MainPage() {
               discountReason?: string;
               updatedBy?: string;
             } | null;
+
             if (val) {
+              // 自身の送信（エコーバック）なら状態を上書きしない
+              if (val.clientId === clientIdRef.current) {
+                return;
+              }
+              // 手元で直近1.8秒以内に入力操作を行っていた場合は、リモート上書きを保留して入力を保護する
+              if (Date.now() - lastLocalEditTimeRef.current < 1800) {
+                return;
+              }
+
               if (val.quantities) setQuantities(val.quantities);
               if (typeof val.totalWorkCount === "number") setTotalWorkCount(val.totalWorkCount);
               if (typeof val.workLocations === "string") setWorkLocations(val.workLocations);
@@ -411,16 +442,108 @@ export default function MainPage() {
     );
   }, [currentShopProducts, selectedCategory]);
 
-  // 個数更新
+  // 個数更新（全体）
   const handleSetQuantity = (itemId: string, qty: number) => {
-    setQuantities((prev) => ({
-      ...prev,
-      [itemId]: Math.max(0, qty),
+    lastLocalEditTimeRef.current = Date.now();
+    const nextQty = Math.max(0, qty);
+    setQuantities((prev) => {
+      const updated = { ...prev, [itemId]: nextQty };
+      return updated;
+    });
+
+    // 分担店舗でスタッフが1名のみの場合は、自動的にそのスタッフのitemsにも反映する
+    if (isMultiStaffShop && staffAssignments.length === 1) {
+      setStaffAssignments((prev) => {
+        if (prev.length !== 1) return prev;
+        const curItems = { ...(prev[0].items || {}) };
+        if (nextQty > 0) {
+          curItems[itemId] = nextQty;
+        } else {
+          delete curItems[itemId];
+        }
+        const newCount = Object.values(curItems).reduce((s, n) => s + n, 0);
+        return [{ ...prev[0], items: curItems, workCount: newCount }];
+      });
+    }
+  };
+
+  // スタッフごとの商品個数の変更
+  const handleSetStaffItemQuantity = (staffIndex: number, itemId: string, qty: number) => {
+    lastLocalEditTimeRef.current = Date.now();
+    const nextQty = Math.max(0, qty);
+
+    setStaffAssignments((prev) => {
+      const updated = [...prev];
+      if (!updated[staffIndex]) return prev;
+
+      const currentItems = { ...(updated[staffIndex].items || {}) };
+      if (nextQty > 0) {
+        currentItems[itemId] = nextQty;
+      } else {
+        delete currentItems[itemId];
+      }
+
+      const newWorkCount = Object.values(currentItems).reduce((sum, n) => sum + n, 0);
+      updated[staffIndex] = {
+        ...updated[staffIndex],
+        items: currentItems,
+        workCount: newWorkCount,
+      };
+
+      // 全体カートの個数が割り当て合計より少なければ、自動で全体個数も追従させる
+      const totalAssigned = updated.reduce((sum, s) => sum + (s.items?.[itemId] || 0), 0);
+      setQuantities((prevQ) => {
+        if ((prevQ[itemId] || 0) < totalAssigned) {
+          return { ...prevQ, [itemId]: totalAssigned };
+        }
+        return prevQ;
+      });
+
+      return updated;
+    });
+  };
+
+  // 全体で選択されている商品を参加スタッフ全員に均等割り当て
+  const handleDistributeItemsEqually = () => {
+    lastLocalEditTimeRef.current = Date.now();
+    if (staffAssignments.length === 0) return;
+
+    const staffCount = staffAssignments.length;
+    const newAssignments = staffAssignments.map((s) => ({
+      ...s,
+      items: {} as Record<string, number>,
+      workCount: 0,
     }));
+
+    Object.entries(quantities).forEach(([itemId, totalQty]) => {
+      if (totalQty <= 0) return;
+      const basePerStaff = Math.floor(totalQty / staffCount);
+      let remainder = totalQty % staffCount;
+
+      newAssignments.forEach((s) => {
+        let count = basePerStaff;
+        if (remainder > 0) {
+          count += 1;
+          remainder -= 1;
+        }
+        if (count > 0) {
+          s.items[itemId] = count;
+        }
+      });
+    });
+
+    newAssignments.forEach((s) => {
+      s.workCount = Object.values(s.items).reduce((acc, q) => acc + q, 0);
+    });
+
+    setStaffAssignments(newAssignments);
+    setNotification({ type: "success", message: "選択中の全商品をスタッフに均等に振り分けました！" });
+    setTimeout(() => setNotification(null), 3000);
   };
 
   // 画像2枚目のクイック加算ボタン [0], [1], [10], [100]
   const handleQuickAdd = (itemId: string, addAmount: number) => {
+    lastLocalEditTimeRef.current = Date.now();
     if (addAmount === 0) {
       handleSetQuantity(itemId, 0);
     } else {
@@ -431,6 +554,7 @@ export default function MainPage() {
 
   // 全リセット
   const handleResetAll = () => {
+    lastLocalEditTimeRef.current = Date.now();
     clearDraft();
     setNotification(null);
   };
@@ -438,6 +562,7 @@ export default function MainPage() {
   // 店舗切り替え
   const handleSwitchShop = (shopId: string) => {
     if (selectedShopId !== shopId) {
+      lastLocalEditTimeRef.current = Date.now();
       setSelectedShopId(shopId);
       setQuantities({}); // 店舗が変わったら選択個数はリセット
       setDiscountAmount(0);
@@ -460,7 +585,7 @@ export default function MainPage() {
   // 合計個数の計算
   const totalItemsCount = Object.values(quantities).reduce((sum, q) => sum + q, 0);
 
-  // 選択中の商品詳細リスト（カート明細・左側表示用）
+  // 選択中の商品詳細リスト（カート明細用）
   const selectedItemsList = useMemo(() => {
     return Object.entries(quantities)
       .filter(([, q]) => q > 0)
@@ -476,6 +601,31 @@ export default function MainPage() {
       .filter((entry): entry is { id: string; item: (typeof items)[0]; quantity: number; subtotal: number } => Boolean(entry.item));
   }, [quantities, items]);
 
+  // 各スタッフの担当商品合計金額および担当点数の計算
+  const staffCalculatedList = useMemo(() => {
+    const discountRate = subtotal > 0 ? finalTotalAmount / subtotal : 1;
+
+    return staffAssignments.map((s) => {
+      const itemsMap = s.items || {};
+      const totalCount = Object.values(itemsMap).reduce((sum, q) => sum + q, 0);
+
+      const staffRawSubtotal = Object.entries(itemsMap).reduce((sum, [id, q]) => {
+        const it = items.find((i) => i.id === id);
+        return sum + (it?.selling_price || 0) * q;
+      }, 0);
+
+      // 値引き反映後のスタッフ按分金額
+      const staffAllocated = Math.round(staffRawSubtotal * discountRate);
+
+      return {
+        ...s,
+        totalCount,
+        staffRawSubtotal,
+        staffAllocated,
+      };
+    });
+  }, [staffAssignments, items, subtotal, finalTotalAmount]);
+
   // 「売る」実行
   const handleSell = () => {
     if (totalItemsCount === 0) {
@@ -486,31 +636,39 @@ export default function MainPage() {
     // 複数人共同作業（出張修理）データの構築
     let multiStaffData: MultiStaffAssignment | undefined = undefined;
     if (isMultiStaffShop && staffAssignments.length > 0) {
-      const sumShares = staffAssignments.reduce((acc, s) => acc + s.workCount, 0);
-      const totalCount = Math.max(1, totalWorkCount || sumShares || 1);
+      const totalStaffSub = staffCalculatedList.reduce((sum, s) => sum + s.staffRawSubtotal, 0);
 
       let allocatedTotal = 0;
-      const shares = staffAssignments.map((s, idx) => {
-        const rate = sumShares > 0 ? (s.workCount / sumShares) : (1 / staffAssignments.length);
-        let alloc = Math.round(finalTotalAmount * rate);
-        if (idx === staffAssignments.length - 1) {
+      const shares = staffCalculatedList.map((s, idx) => {
+        let alloc = s.staffAllocated;
+
+        // スタッフにまだアイテムが割り当てられていない場合は均等按分
+        if (totalStaffSub === 0) {
+          alloc = Math.round(finalTotalAmount / staffCalculatedList.length);
+        }
+
+        if (idx === staffCalculatedList.length - 1) {
           // 最終行で端数調整を行い、合計金額と完全に一致させる
-          alloc = finalTotalAmount - allocatedTotal;
+          alloc = Math.max(0, finalTotalAmount - allocatedTotal);
         } else {
           allocatedTotal += alloc;
         }
+
+        const rate = finalTotalAmount > 0 ? alloc / finalTotalAmount : 1 / staffCalculatedList.length;
+
         return {
           userId: s.userId,
           staffName: s.staffName,
-          workCount: s.workCount,
+          workCount: Math.max(1, s.totalCount || s.workCount || 1),
           shareRate: rate,
           allocatedAmount: Math.max(0, alloc),
+          items: s.items || {},
         };
       });
 
       multiStaffData = {
         enabled: true,
-        totalWorkCount: totalCount,
+        totalWorkCount: Math.max(1, totalItemsCount),
         workLocations: workLocations.trim() || undefined,
         staffShares: shares,
       };
@@ -1114,189 +1272,404 @@ export default function MainPage() {
     </div>
   );
 
-  // ⑤ 複数人分担・出張修理入力パネル（三枚目の画像を全体レイアウトに拡張）
-  const renderStaffAssignmentSection = () => (
-    <div className="bg-stone-900 border border-indigo-900/50 p-5 sm:p-6 rounded-2xl shadow-xl space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-900/50 pb-3">
-        <div className="flex items-center gap-2.5">
-          <span className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-            <Users className="w-5 h-5" />
-          </span>
-          <div>
-            <h3 className="text-sm sm:text-base font-black text-indigo-200 flex items-center gap-2">
-              👥 複数人共同作業・出張修理の分担設定
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                🟢 クラウド同期中
+  // ⑤ スタッフ追加モーダル（全スタッフ一覧から選択）
+  const renderStaffSelectModal = () => {
+    if (!isStaffModalOpen) return null;
+
+    const filteredUsers = users.filter((u) => {
+      if (!staffSearchQuery.trim()) return true;
+      const q = staffSearchQuery.toLowerCase();
+      return (
+        u.displayName.toLowerCase().includes(q) ||
+        u.username.toLowerCase().includes(q) ||
+        (u.roleName || "").toLowerCase().includes(q)
+      );
+    });
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="bg-stone-900 border border-stone-700 w-full max-w-lg rounded-2xl shadow-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+            <div className="flex items-center gap-2">
+              <span className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                <Users className="w-5 h-5" />
               </span>
-            </h3>
-            <p className="text-xs text-stone-400">
-              修理箇所数や台数に応じて、この売上実績を参加スタッフに自動按分します。他の人が入力した内容もリアルタイム同期されます。
-            </p>
+              <div>
+                <h3 className="text-base font-black text-white">
+                  出張修理スタッフの追加・選択
+                </h3>
+                <p className="text-xs text-stone-400">
+                  今回の作業に参加するスタッフを選択してください（複数人選択可能）
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsStaffModalOpen(false)}
+              className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            if (users.length === 0) return;
-            const existingUserIds = new Set(staffAssignments.map((s) => s.userId));
-            const candidate = users.find((u) => !existingUserIds.has(u.id)) || users[0];
-            setStaffAssignments((prev) => [
-              ...prev,
-              { userId: candidate.id, staffName: candidate.displayName, workCount: 1 },
-            ]);
-          }}
-          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer self-start sm:self-auto transition-all"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span>スタッフを追加</span>
-        </button>
-      </div>
 
-      {/* 修理内容メモ & 合計箇所数 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="md:col-span-2 space-y-1">
-          <label className="text-xs font-bold text-stone-300 flex items-center gap-1">
-            <Wrench className="w-3.5 h-3.5 text-indigo-400" />
-            修理内容・修理箇所メモ (任意):
-          </label>
-          <input
-            type="text"
-            value={workLocations}
-            onChange={(e) => setWorkLocations(e.target.value)}
-            placeholder="例: フロントドア板金、エンジン調整、バンパー交換..."
-            className="w-full px-3.5 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs text-white placeholder-stone-500 focus:border-indigo-500"
-          />
-        </div>
-
-        <div className="space-y-1">
-          <label className="text-xs font-bold text-stone-300 block">
-            合計{currentShopInfo.workTypeLabel || "修理箇所数"} / 台数:
-          </label>
-          <div className="flex items-center gap-2 bg-stone-950 px-3 py-1.5 rounded-xl border border-stone-700">
+          {/* 検索バー */}
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" />
             <input
-              type="number"
-              min="1"
-              value={totalWorkCount}
-              onChange={(e) => setTotalWorkCount(Math.max(1, parseInt(e.target.value) || 1))}
-              className="w-full bg-transparent text-center font-black text-indigo-300 text-base focus:outline-none"
+              type="text"
+              value={staffSearchQuery}
+              onChange={(e) => setStaffSearchQuery(e.target.value)}
+              placeholder="スタッフ名や役職で検索..."
+              className="w-full pl-9 pr-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs text-white placeholder-stone-500 focus:border-indigo-500 focus:outline-none"
             />
-            <span className="text-xs text-stone-400 font-bold shrink-0">
-              {currentShopInfo.workTypeLabel || "箇所"}
+          </div>
+
+          {/* スタッフ一覧 */}
+          <div className="max-h-72 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+            {filteredUsers.length === 0 ? (
+              <div className="text-center py-6 text-stone-500 text-xs font-bold">
+                該当するスタッフが見つかりません
+              </div>
+            ) : (
+              filteredUsers.map((u) => {
+                const isSelected = staffAssignments.some((s) => s.userId === u.id);
+
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => {
+                      lastLocalEditTimeRef.current = Date.now();
+                      if (isSelected) {
+                        if (staffAssignments.length <= 1) {
+                          alert("最低1名の担当スタッフが必要です。");
+                          return;
+                        }
+                        setStaffAssignments((prev) => prev.filter((s) => s.userId !== u.id));
+                      } else {
+                        setStaffAssignments((prev) => [
+                          ...prev,
+                          { userId: u.id, staffName: u.displayName, workCount: 0, items: {} },
+                        ]);
+                      }
+                    }}
+                    className={`w-full p-3 rounded-xl border text-left transition-all flex items-center justify-between cursor-pointer ${
+                      isSelected
+                        ? "bg-indigo-950/40 border-indigo-500/60 shadow-md ring-1 ring-indigo-500/30"
+                        : "bg-stone-950 border-stone-800 hover:border-stone-700 hover:bg-stone-800/40"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-stone-800 border border-stone-700 flex items-center justify-center font-black text-sm text-white shrink-0">
+                        {u.displayName.charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-sm text-white truncate">
+                            {u.displayName}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-stone-800 text-stone-300 border border-stone-700">
+                            {u.roleName || (u.role === "executive" ? "幹部" : "スタッフ")}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-stone-500 block truncate">
+                          @{u.username}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0 ml-2">
+                      {isSelected ? (
+                        <span className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-black flex items-center gap-1 shadow-xs">
+                          <Check className="w-3.5 h-3.5" />
+                          <span>参加中</span>
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-lg bg-stone-800 text-stone-400 text-xs font-bold hover:text-white">
+                          ＋ 追加
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          <div className="flex items-center justify-between border-t border-stone-800 pt-3">
+            <span className="text-xs text-stone-400 font-bold">
+              現在選択中: <strong className="text-white">{staffAssignments.length}名</strong>
             </span>
+            <button
+              type="button"
+              onClick={() => setIsStaffModalOpen(false)}
+              className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black shadow-md cursor-pointer transition-all"
+            >
+              決定して閉じる
+            </button>
           </div>
         </div>
       </div>
+    );
+  };
 
-      {/* スタッフ分担リスト */}
-      <div className="space-y-2.5 pt-2">
-        <div className="flex items-center justify-between text-xs font-bold text-stone-400">
-          <span>担当スタッフと各自の担当箇所数:</span>
-          <span className="text-[11px] font-mono">
-            合計: {staffAssignments.reduce((a, s) => a + s.workCount, 0)} / 目標 {totalWorkCount}{currentShopInfo.workTypeLabel || "箇所"}
-          </span>
+  // ⑥ 複数人分担・出張修理入力パネル（各スタッフカード内に選択商品を割り当て）
+  const renderStaffAssignmentSection = () => {
+    // 全体で選択されている商品のリスト
+    const overallCartItems = selectedItemsList;
+
+    // 全商品の割り当て状況の集計
+    const totalAssignedAllStaff = staffAssignments.reduce((acc, s) => {
+      const itemsMap = s.items || {};
+      return acc + Object.values(itemsMap).reduce((sum, q) => sum + q, 0);
+    }, 0);
+
+    return (
+      <div className="bg-stone-900 border border-indigo-900/50 p-5 sm:p-6 rounded-2xl shadow-xl space-y-4">
+        {/* ヘッダー: タイトル & 均等分配 & スタッフ追加ボタン */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-indigo-900/50 pb-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 shrink-0">
+              <Users className="w-5 h-5" />
+            </span>
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-black text-indigo-200 flex items-center gap-2 flex-wrap">
+                <span>👥 出張修理・複数人作業の担当スタッフ</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  🟢 クラウド同期中
+                </span>
+              </h3>
+              <p className="text-xs text-stone-400 truncate">
+                各スタッフが担当したパーツ・作業メニューの個数を設定すると、売上実績が自動計算されます。
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {overallCartItems.length > 0 && staffAssignments.length > 1 && (
+              <button
+                type="button"
+                onClick={handleDistributeItemsEqually}
+                className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 hover:text-white text-xs font-bold border border-stone-700 flex items-center gap-1.5 shadow-xs cursor-pointer transition-all"
+                title="全体で選択中の商品をスタッフ全員に均等に振り分けます"
+              >
+                <span>⚖️ 全員に均等分配</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setStaffSearchQuery("");
+                setIsStaffModalOpen(true);
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer transition-all"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>＋ スタッフを選択追加 ({staffAssignments.length}名)</span>
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {staffAssignments.map((assign, idx) => {
-            const sumShares = staffAssignments.reduce((acc, s) => acc + s.workCount, 0);
-            const shareRate = sumShares > 0 ? assign.workCount / sumShares : 1 / staffAssignments.length;
-            const allocAmt = Math.round(finalTotalAmount * shareRate);
+        {/* スタッフ一覧カード（各スタッフカード内に選択した商品・パーツを埋め込み） */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+          {staffAssignments.map((assign, staffIdx) => {
+            const calculated = staffCalculatedList[staffIdx] || {
+              totalCount: 0,
+              staffRawSubtotal: 0,
+              staffAllocated: 0,
+            };
+
+            const staffItemsMap = assign.items || {};
+
+            // このスタッフカードに表示する商品のリスト
+            // 全体で選択されている商品 ＋ すでにこのスタッフに設定されている商品をマージ
+            const itemIdsSet = new Set<string>();
+            overallCartItems.forEach((c) => itemIdsSet.add(c.id));
+            Object.keys(staffItemsMap).forEach((id) => itemIdsSet.add(id));
+            const relevantItemIds = Array.from(itemIdsSet);
 
             return (
               <div
-                key={idx}
-                className="bg-stone-950/90 p-3 rounded-xl border border-stone-800 space-y-2.5 shadow-xs"
+                key={assign.userId + staffIdx}
+                className="bg-stone-950/90 p-4 rounded-2xl border border-stone-800 space-y-3 shadow-md flex flex-col justify-between"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <select
-                    value={assign.userId}
-                    onChange={(e) => {
-                      const selectedUser = users.find((u) => u.id === e.target.value);
-                      if (!selectedUser) return;
-                      setStaffAssignments((prev) =>
-                        prev.map((s, i) =>
-                          i === idx
-                            ? { ...s, userId: selectedUser.id, staffName: selectedUser.displayName }
-                            : s
-                        )
-                      );
-                    }}
-                    className="bg-stone-900 text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-stone-700 focus:border-indigo-500 flex-1 min-w-0 truncate cursor-pointer"
-                  >
-                    {users.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.displayName} ({u.roleName || (u.role === "executive" ? "幹部" : "スタッフ")})
-                      </option>
-                    ))}
-                  </select>
+                {/* カード上部: スタッフ名 ＆ 担当者変更 ＆ 削除 */}
+                <div className="flex items-center justify-between gap-2 border-b border-stone-800/80 pb-2.5">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-950/60 text-indigo-300 border border-indigo-700/50 flex items-center justify-center font-black text-xs shrink-0">
+                      {assign.staffName.charAt(0)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <select
+                        value={assign.userId}
+                        onChange={(e) => {
+                          lastLocalEditTimeRef.current = Date.now();
+                          const selectedUser = users.find((u) => u.id === e.target.value);
+                          if (!selectedUser) return;
+                          setStaffAssignments((prev) =>
+                            prev.map((s, i) =>
+                              i === staffIdx
+                                ? { ...s, userId: selectedUser.id, staffName: selectedUser.displayName }
+                                : s
+                            )
+                          );
+                        }}
+                        className="bg-stone-900 text-white text-xs font-bold px-2.5 py-1 rounded-lg border border-stone-700 focus:border-indigo-500 w-full truncate cursor-pointer"
+                      >
+                        {users.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.displayName} ({u.roleName || (u.role === "executive" ? "幹部" : "スタッフ")})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
 
                   {staffAssignments.length > 1 && (
                     <button
                       type="button"
                       onClick={() => {
-                        setStaffAssignments((prev) => prev.filter((_, i) => i !== idx));
+                        lastLocalEditTimeRef.current = Date.now();
+                        setStaffAssignments((prev) => prev.filter((_, i) => i !== staffIdx));
                       }}
                       className="p-1.5 rounded-lg text-stone-500 hover:text-rose-400 hover:bg-stone-800 transition-colors shrink-0 cursor-pointer"
-                      title="担当から削除"
+                      title="このスタッフを担当から外す"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   )}
                 </div>
 
-                <div className="flex items-center justify-between gap-2 pt-1 border-t border-stone-800/80 text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] text-stone-400 font-bold shrink-0">担当:</span>
-                    <div className="flex items-center bg-stone-900 rounded-lg border border-stone-700 p-0.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const val = Math.max(1, assign.workCount - 1);
-                          setStaffAssignments((prev) =>
-                            prev.map((s, i) => (i === idx ? { ...s, workCount: val } : s))
-                          );
-                        }}
-                        className="w-6 h-6 flex items-center justify-center text-stone-400 hover:text-white rounded hover:bg-stone-800 cursor-pointer"
-                      >
-                        <Minus className="w-3 h-3" />
-                      </button>
-                      <input
-                        type="number"
-                        min="1"
-                        value={assign.workCount}
-                        onChange={(e) => {
-                          const val = Math.max(1, parseInt(e.target.value) || 1);
-                          setStaffAssignments((prev) =>
-                            prev.map((s, i) => (i === idx ? { ...s, workCount: val } : s))
-                          );
-                        }}
-                        className="w-10 bg-transparent text-center font-black text-indigo-300 text-xs focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const val = assign.workCount + 1;
-                          setStaffAssignments((prev) =>
-                            prev.map((s, i) => (i === idx ? { ...s, workCount: val } : s))
-                          );
-                        }}
-                        className="w-6 h-6 flex items-center justify-center text-stone-400 hover:text-white rounded hover:bg-stone-800 cursor-pointer"
-                      >
-                        <Plus className="w-3 h-3" />
-                      </button>
+                {/* カード中段: 選択した商品・使用パーツの担当個数（3枚目の画像と同じレイアウト） */}
+                <div className="space-y-2 flex-1 min-h-[70px]">
+                  {relevantItemIds.length === 0 ? (
+                    <div className="text-center py-4 bg-stone-900/40 rounded-xl border border-dashed border-stone-800 text-stone-500 text-xs">
+                      下の商品一覧からパーツ・修理メニューを選択してください
                     </div>
-                    <span className="text-[11px] text-stone-400 font-bold shrink-0">
-                      {currentShopInfo.workTypeLabel || "箇所"}
-                    </span>
+                  ) : (
+                    <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1 custom-scrollbar">
+                      {relevantItemIds.map((itemId) => {
+                        const it = items.find((i) => i.id === itemId);
+                        if (!it) return null;
+
+                        const assignedQty = staffItemsMap[itemId] || 0;
+                        const itemSub = it.selling_price * assignedQty;
+                        const overallQty = quantities[itemId] || 0;
+
+                        return (
+                          <div
+                            key={itemId}
+                            className={`p-2 rounded-xl border transition-all flex items-center justify-between gap-2 text-xs ${
+                              assignedQty > 0
+                                ? "bg-stone-900/95 border-stone-700 shadow-xs"
+                                : "bg-stone-900/30 border-stone-800/80 opacity-60"
+                            }`}
+                          >
+                            {/* 写真 ＆ 品名 ＆ 単価 */}
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              {it.image_url ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={it.image_url}
+                                  alt={it.name}
+                                  className="w-7 h-7 rounded-lg object-cover border border-stone-700 shrink-0"
+                                />
+                              ) : (
+                                <div className="w-7 h-7 rounded-lg bg-stone-800 border border-stone-700 flex items-center justify-center text-xs shrink-0 text-stone-500">
+                                  📦
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <h5 className="font-extrabold text-white text-xs truncate">
+                                  {it.name}
+                                </h5>
+                                <div className="flex items-center gap-1.5 text-[10px]">
+                                  <span className="text-rose-300 font-bold">
+                                    {formatCurrency(it.selling_price)}
+                                  </span>
+                                  {overallQty > 0 && (
+                                    <span className="text-stone-500 font-mono">
+                                      (全体:{overallQty})
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* 担当個数操作 [-] [数値] [+] & 小計 */}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <div className="flex items-center bg-stone-950 rounded-lg border border-stone-700 p-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetStaffItemQuantity(staffIdx, itemId, assignedQty - 1)}
+                                  className="w-5 h-5 flex items-center justify-center text-stone-400 hover:text-white rounded hover:bg-stone-800 cursor-pointer"
+                                  title="-1"
+                                >
+                                  <Minus className="w-2.5 h-2.5" />
+                                </button>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={assignedQty === 0 ? "" : assignedQty}
+                                  onChange={(e) => {
+                                    const val = e.target.value === "" ? 0 : parseInt(e.target.value, 10);
+                                    handleSetStaffItemQuantity(staffIdx, itemId, isNaN(val) ? 0 : val);
+                                  }}
+                                  placeholder="0"
+                                  className="w-9 bg-transparent text-center font-black text-indigo-300 text-xs focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetStaffItemQuantity(staffIdx, itemId, assignedQty + 1)}
+                                  className="w-5 h-5 flex items-center justify-center text-stone-400 hover:text-white rounded hover:bg-stone-800 cursor-pointer"
+                                  title="+1"
+                                >
+                                  <Plus className="w-2.5 h-2.5" />
+                                </button>
+                              </div>
+
+                              <span className="text-xs font-black text-amber-300 font-mono min-w-[55px] text-right">
+                                {formatCurrency(itemSub)}
+                              </span>
+
+                              {assignedQty > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetStaffItemQuantity(staffIdx, itemId, 0)}
+                                  className="text-stone-500 hover:text-rose-400 p-1 rounded hover:bg-stone-800 cursor-pointer"
+                                  title="担当から解除"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* カード下部: 担当合計点数 ＆ このスタッフの売上金額 */}
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-stone-800/80 text-xs bg-stone-900/50 px-3 py-2 rounded-xl">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-stone-400 font-bold">担当点数:</span>
+                    <strong className="text-white font-mono text-sm">
+                      {calculated.totalCount} 点
+                    </strong>
                   </div>
 
-                  <div className="text-right shrink-0">
-                    <span className="text-xs font-black text-amber-300 font-mono">
-                      {formatCurrency(allocAmt)}
+                  <div className="text-right">
+                    <span className="text-[10px] text-stone-400 mr-1.5">このスタッフの売上:</span>
+                    <span className="text-sm font-black text-amber-300 font-mono">
+                      {formatCurrency(calculated.staffAllocated)}
                     </span>
-                    <span className="text-[10px] text-stone-400 ml-1">
-                      ({(shareRate * 100).toFixed(0)}%)
-                    </span>
+                    {finalTotalAmount > 0 && (
+                      <span className="text-[10px] text-stone-400 ml-1">
+                        ({Math.round((calculated.staffAllocated / finalTotalAmount) * 100)}%)
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1304,32 +1677,34 @@ export default function MainPage() {
           })}
         </div>
 
-        {/* 箇所数合致チェックインジケータ */}
-        {(() => {
-          const sumCount = staffAssignments.reduce((acc, s) => acc + s.workCount, 0);
-          const isMatched = sumCount === totalWorkCount;
-          return (
-            <div className="flex items-center justify-between text-xs pt-1 px-1 flex-wrap gap-2">
-              <span className="text-stone-400">
-                担当合計: <strong className="text-white">{sumCount}{currentShopInfo.workTypeLabel || "箇所"}</strong> / 目標: <strong className="text-indigo-300">{totalWorkCount}{currentShopInfo.workTypeLabel || "箇所"}</strong>
+        {/* 全体商品の割り当て状況インジケータ */}
+        {overallCartItems.length > 0 && (
+          <div className="flex items-center justify-between text-xs pt-1 px-1 flex-wrap gap-2 border-t border-stone-800/60">
+            <span className="text-stone-400">
+              全体選択: <strong className="text-white">{totalItemsCount}点</strong> /
+              スタッフ割り当て合計: <strong className="text-indigo-300">{totalAssignedAllStaff}点</strong>
+            </span>
+            {totalAssignedAllStaff === totalItemsCount ? (
+              <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px]">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                全商品割り当て一致
               </span>
-              {!isMatched ? (
-                <span className="text-amber-400 font-bold flex items-center gap-1 text-[11px]">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                  箇所数不一致（按分比率で自動計算）
-                </span>
-              ) : (
-                <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px]">
-                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                  箇所数一致
-                </span>
-              )}
-            </div>
-          );
-        })()}
+            ) : totalAssignedAllStaff < totalItemsCount ? (
+              <span className="text-amber-400 font-bold flex items-center gap-1 text-[11px]">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                未割り当て商品があります (残り {totalItemsCount - totalAssignedAllStaff}点)
+              </span>
+            ) : (
+              <span className="text-rose-400 font-bold flex items-center gap-1 text-[11px]">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                割り当て数が全体を超過しています
+              </span>
+            )}
+          </div>
+        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   // ⑥ 通知・警告メッセージ表示
   const renderNotifications = () => (
@@ -1401,6 +1776,7 @@ export default function MainPage() {
   return (
     <div className="w-full min-h-full px-3 sm:px-4 md:px-6 py-4">
       {renderNotifications()}
+      {renderStaffSelectModal()}
 
       {isMultiStaffShop ? (
         /* ========================================================
