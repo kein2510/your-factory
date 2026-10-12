@@ -87,6 +87,9 @@ export default function MainPage() {
   const [staffAssignments, setStaffAssignments] = useState<StaffAssignmentInput[]>([]);
   const [sharedDraftNotice, setSharedDraftNotice] = useState<string | null>(null);
 
+  // 分担店舗用: 選択された商品（パーツ・修理メニュー）IDのセット
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+
   // スタッフ追加モーダル開閉ステート
   const [isStaffModalOpen, setIsStaffModalOpen] = useState<boolean>(false);
   const [staffSearchQuery, setStaffSearchQuery] = useState<string>("");
@@ -106,7 +109,7 @@ export default function MainPage() {
   useEffect(() => {
     if (currentUser && staffAssignments.length === 0) {
       setStaffAssignments([
-        { userId: currentUser.id, staffName: currentUser.displayName, workCount: 1, items: {} },
+        { userId: currentUser.id, staffName: currentUser.displayName, workCount: 0, items: {} },
       ]);
     }
   }, [currentUser, staffAssignments.length]);
@@ -137,6 +140,7 @@ export default function MainPage() {
           if (!error && data?.value) {
             const val = data.value as {
               quantities?: { [itemId: string]: number };
+              selectedProductIds?: string[];
               totalWorkCount?: number;
               workLocations?: string;
               staffAssignments?: StaffAssignmentInput[];
@@ -149,6 +153,11 @@ export default function MainPage() {
             } else {
               setQuantities({});
             }
+            if (Array.isArray(val.selectedProductIds)) {
+              setSelectedProductIds(val.selectedProductIds);
+            } else if (val.quantities) {
+              setSelectedProductIds(Object.keys(val.quantities));
+            }
             if (typeof val.totalWorkCount === "number") {
               setTotalWorkCount(val.totalWorkCount);
             }
@@ -158,7 +167,7 @@ export default function MainPage() {
             if (Array.isArray(val.staffAssignments) && val.staffAssignments.length > 0) {
               setStaffAssignments(val.staffAssignments);
             } else if (currentUser) {
-              setStaffAssignments([{ userId: currentUser.id, staffName: currentUser.displayName, workCount: 1, items: {} }]);
+              setStaffAssignments([{ userId: currentUser.id, staffName: currentUser.displayName, workCount: 0, items: {} }]);
             }
             if (typeof val.discountAmount === "number") {
               setDiscountAmount(val.discountAmount);
@@ -215,6 +224,7 @@ export default function MainPage() {
             shopId: selectedShopId,
             clientId: clientIdRef.current, // 自身のクライアントID
             quantities,
+            selectedProductIds,
             totalWorkCount,
             workLocations,
             staffAssignments,
@@ -254,6 +264,7 @@ export default function MainPage() {
     draftStorageKey,
     selectedShopId,
     quantities,
+    selectedProductIds,
     totalWorkCount,
     workLocations,
     staffAssignments,
@@ -265,6 +276,7 @@ export default function MainPage() {
   // ドラフトのクリア関数
   const clearDraft = () => {
     setQuantities({});
+    setSelectedProductIds([]);
     setDiscountAmount(0);
     setDiscountReason("");
     setShowDiscountForm(false);
@@ -272,7 +284,7 @@ export default function MainPage() {
     setWorkLocations("");
     if (currentUser) {
       setStaffAssignments([
-        { userId: currentUser.id, staffName: currentUser.displayName, workCount: 1 },
+        { userId: currentUser.id, staffName: currentUser.displayName, workCount: 0, items: {} },
       ]);
     } else {
       setStaffAssignments([]);
@@ -347,6 +359,7 @@ export default function MainPage() {
             const val = row.value as {
               clientId?: string;
               quantities?: { [itemId: string]: number };
+              selectedProductIds?: string[];
               totalWorkCount?: number;
               workLocations?: string;
               staffAssignments?: StaffAssignmentInput[];
@@ -366,6 +379,11 @@ export default function MainPage() {
               }
 
               if (val.quantities) setQuantities(val.quantities);
+              if (Array.isArray(val.selectedProductIds)) {
+                setSelectedProductIds(val.selectedProductIds);
+              } else if (val.quantities) {
+                setSelectedProductIds(Object.keys(val.quantities));
+              }
               if (typeof val.totalWorkCount === "number") setTotalWorkCount(val.totalWorkCount);
               if (typeof val.workLocations === "string") setWorkLocations(val.workLocations);
               if (Array.isArray(val.staffAssignments)) setStaffAssignments(val.staffAssignments);
@@ -442,7 +460,59 @@ export default function MainPage() {
     );
   }, [currentShopProducts, selectedCategory]);
 
-  // 個数更新（全体）
+  // 伝票に対象として選択されている商品IDの統合リスト
+  const effectiveSelectedProductIds = useMemo(() => {
+    const ids = new Set<string>(selectedProductIds);
+    Object.keys(quantities).forEach((id) => {
+      if ((quantities[id] || 0) > 0) ids.add(id);
+    });
+    staffAssignments.forEach((s) => {
+      Object.keys(s.items || {}).forEach((id) => {
+        if ((s.items?.[id] || 0) > 0) ids.add(id);
+      });
+    });
+    return Array.from(ids);
+  }, [selectedProductIds, quantities, staffAssignments]);
+
+  // 分担店舗用: 商品を伝票に「選択」または「解除」するハンドラ（個数は上の個人で入れる）
+  const handleToggleProductSelection = (itemId: string) => {
+    lastLocalEditTimeRef.current = Date.now();
+    const isAlreadySelected = effectiveSelectedProductIds.includes(itemId);
+
+    if (isAlreadySelected) {
+      // 選択解除: 全スタッフの担当個数をクリア
+      setSelectedProductIds((prev) => prev.filter((id) => id !== itemId));
+      setStaffAssignments((curStaff) =>
+        curStaff.map((s) => {
+          const newItems = { ...(s.items || {}) };
+          delete newItems[itemId];
+          const newCount = Object.values(newItems).reduce((sum, n) => sum + n, 0);
+          return { ...s, items: newItems, workCount: newCount };
+        })
+      );
+      setQuantities((prevQ) => {
+        const next = { ...prevQ };
+        delete next[itemId];
+        return next;
+      });
+    } else {
+      // 伝票に追加（選択）
+      setSelectedProductIds((prev) => (prev.includes(itemId) ? prev : [...prev, itemId]));
+
+      // スタッフが1名のみの場合は初期個数1を自動セット、複数名の場合は上のスタッフ欄で入力
+      if (staffAssignments.length === 1) {
+        setStaffAssignments((curStaff) => {
+          if (curStaff.length !== 1) return curStaff;
+          const curItems = { ...(curStaff[0].items || {}), [itemId]: 1 };
+          const newCount = Object.values(curItems).reduce((s, n) => s + n, 0);
+          return [{ ...curStaff[0], items: curItems, workCount: newCount }];
+        });
+        setQuantities((prevQ) => ({ ...prevQ, [itemId]: 1 }));
+      }
+    }
+  };
+
+  // 個数更新（通常店舗用）
   const handleSetQuantity = (itemId: string, qty: number) => {
     lastLocalEditTimeRef.current = Date.now();
     const nextQty = Math.max(0, qty);
@@ -451,7 +521,6 @@ export default function MainPage() {
       return updated;
     });
 
-    // 分担店舗でスタッフが1名のみの場合は、自動的にそのスタッフのitemsにも反映する
     if (isMultiStaffShop && staffAssignments.length === 1) {
       setStaffAssignments((prev) => {
         if (prev.length !== 1) return prev;
@@ -467,7 +536,7 @@ export default function MainPage() {
     }
   };
 
-  // スタッフごとの商品個数の変更
+  // スタッフごとの商品個数の変更（個数の入力は上の個人でやる）
   const handleSetStaffItemQuantity = (staffIndex: number, itemId: string, qty: number) => {
     lastLocalEditTimeRef.current = Date.now();
     const nextQty = Math.max(0, qty);
@@ -490,14 +559,19 @@ export default function MainPage() {
         workCount: newWorkCount,
       };
 
-      // 全体カートの個数が割り当て合計より少なければ、自動で全体個数も追従させる
-      const totalAssigned = updated.reduce((sum, s) => sum + (s.items?.[itemId] || 0), 0);
-      setQuantities((prevQ) => {
-        if ((prevQ[itemId] || 0) < totalAssigned) {
-          return { ...prevQ, [itemId]: totalAssigned };
-        }
-        return prevQ;
-      });
+      // 分担店舗の場合: 全体カートの数量は全スタッフの担当個数の合計と常に完全一致させる
+      if (isMultiStaffShop) {
+        const totalAssigned = updated.reduce((sum, s) => sum + (s.items?.[itemId] || 0), 0);
+        setQuantities((prevQ) => {
+          if (totalAssigned > 0) {
+            return { ...prevQ, [itemId]: totalAssigned };
+          } else {
+            const nextQ = { ...prevQ };
+            delete nextQ[itemId];
+            return nextQ;
+          }
+        });
+      }
 
       return updated;
     });
@@ -1114,13 +1188,14 @@ export default function MainPage() {
         {displayedProducts.map((item) => {
           const currentQty = quantities[item.id] || 0;
           const itemSubtotal = item.selling_price * currentQty;
+          const isSelectedInMulti = isMultiStaffShop && effectiveSelectedProductIds.includes(item.id);
 
           return (
             <div
               key={item.id}
               className={`p-4 rounded-2xl border transition-all duration-150 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
-                currentQty > 0
-                  ? "bg-stone-800/90 border-rose-500/50 shadow-lg shadow-rose-950/20 ring-1 ring-rose-500/30"
+                isSelectedInMulti || currentQty > 0
+                  ? "bg-stone-800/90 border-indigo-500/60 shadow-lg shadow-indigo-950/20 ring-1 ring-indigo-500/40"
                   : "bg-stone-900/60 border-stone-800 hover:border-stone-700"
               }`}
             >
@@ -1175,7 +1250,7 @@ export default function MainPage() {
 
                     {currentQty > 0 && (
                       <span className="text-rose-300 font-bold bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">
-                        小計: {formatCurrency(itemSubtotal)}
+                        小計: {formatCurrency(itemSubtotal)} ({currentQty}点)
                       </span>
                     )}
                   </div>
@@ -1216,55 +1291,82 @@ export default function MainPage() {
                 </div>
               </div>
 
-              {/* 個数入力 & クイック加算ボタン [0] [1] [10] [100] */}
-              <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2 self-stretch md:self-auto justify-end">
-                <div className="flex items-center bg-stone-950 rounded-xl border border-stone-700 p-1">
+              {/* 右側: 分担店舗の場合は「選択のみ」ボタン、通常店舗の場合は個数スピン */}
+              {isMultiStaffShop ? (
+                <div className="flex items-center gap-2 self-stretch md:self-auto justify-end">
                   <button
                     type="button"
-                    onClick={() => handleSetQuantity(item.id, currentQty - 1)}
-                    className="w-8 h-8 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 flex items-center justify-center transition-colors"
+                    onClick={() => handleToggleProductSelection(item.id)}
+                    className={`h-11 px-5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-md active:scale-95 ${
+                      isSelectedInMulti
+                        ? "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-950/40 ring-1 ring-rose-400/50"
+                        : "bg-stone-800 hover:bg-indigo-600 hover:text-white text-stone-200 border border-stone-700 hover:border-indigo-500"
+                    }`}
                   >
-                    <Minus className="w-3.5 h-3.5" />
-                  </button>
-
-                  <input
-                    type="number"
-                    min="0"
-                    value={currentQty === 0 ? "" : currentQty}
-                    onChange={(e) =>
-                      handleSetQuantity(item.id, parseInt(e.target.value, 10) || 0)
-                    }
-                    placeholder="0"
-                    className="w-16 text-center font-black text-white text-base bg-transparent focus:outline-none"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => handleSetQuantity(item.id, currentQty + 1)}
-                    className="w-8 h-8 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 flex items-center justify-center transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
+                    {isSelectedInMulti ? (
+                      <>
+                        <Check className="w-4 h-4 text-white" />
+                        <span>✓ 伝票に追加中 (解除)</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4 text-indigo-400" />
+                        <span>＋ 伝票に追加 (選択)</span>
+                      </>
+                    )}
                   </button>
                 </div>
-
-                <div className="flex items-center gap-1.5">
-                  {[0, 1, 10, 100].map((num) => (
+              ) : (
+                /* 通常店舗: 個数入力 & クイック加算ボタン [0] [1] [10] [100] */
+                <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2 self-stretch md:self-auto justify-end">
+                  <div className="flex items-center bg-stone-950 rounded-xl border border-stone-700 p-1">
                     <button
-                      key={num}
                       type="button"
-                      onClick={() => handleQuickAdd(item.id, num)}
-                      className={`w-11 h-10 rounded-xl border font-black text-sm transition-all shadow-md active:scale-95 flex items-center justify-center cursor-pointer ${
-                        num === 0
-                          ? "bg-stone-800 hover:bg-stone-700 border-stone-600 text-stone-300"
-                          : "bg-stone-800 hover:bg-stone-700 border-stone-600 hover:border-rose-500 text-white"
-                      }`}
-                      title={num === 0 ? "個数を0にリセット" : `+${num} 個加算`}
+                      onClick={() => handleSetQuantity(item.id, currentQty - 1)}
+                      className="w-8 h-8 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 flex items-center justify-center transition-colors cursor-pointer"
                     >
-                      {num}
+                      <Minus className="w-3.5 h-3.5" />
                     </button>
-                  ))}
+
+                    <input
+                      type="number"
+                      min="0"
+                      value={currentQty === 0 ? "" : currentQty}
+                      onChange={(e) =>
+                        handleSetQuantity(item.id, parseInt(e.target.value, 10) || 0)
+                      }
+                      placeholder="0"
+                      className="w-16 text-center font-black text-white text-base bg-transparent focus:outline-none"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => handleSetQuantity(item.id, currentQty + 1)}
+                      className="w-8 h-8 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 flex items-center justify-center transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    {[0, 1, 10, 100].map((num) => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => handleQuickAdd(item.id, num)}
+                        className={`w-11 h-10 rounded-xl border font-black text-sm transition-all shadow-md active:scale-95 flex items-center justify-center cursor-pointer ${
+                          num === 0
+                            ? "bg-stone-800 hover:bg-stone-700 border-stone-600 text-stone-300"
+                            : "bg-stone-800 hover:bg-stone-700 border-stone-600 hover:border-rose-500 text-white"
+                        }`}
+                        title={num === 0 ? "個数を0にリセット" : `+${num} 個加算`}
+                      >
+                        {num}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           );
         })}
@@ -1415,8 +1517,8 @@ export default function MainPage() {
 
   // ⑥ 複数人分担・出張修理入力パネル（各スタッフカード内に選択商品を割り当て）
   const renderStaffAssignmentSection = () => {
-    // 全体で選択されている商品のリスト
-    const overallCartItems = selectedItemsList;
+    // 伝票に対象として選択されている商品IDのリスト
+    const targetItemIds = effectiveSelectedProductIds;
 
     // 全商品の割り当て状況の集計
     const totalAssignedAllStaff = staffAssignments.reduce((acc, s) => {
@@ -1446,12 +1548,12 @@ export default function MainPage() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            {overallCartItems.length > 0 && staffAssignments.length > 1 && (
+            {targetItemIds.length > 0 && staffAssignments.length > 1 && totalAssignedAllStaff > 0 && (
               <button
                 type="button"
                 onClick={handleDistributeItemsEqually}
                 className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 hover:text-white text-xs font-bold border border-stone-700 flex items-center gap-1.5 shadow-xs cursor-pointer transition-all"
-                title="全体で選択中の商品をスタッフ全員に均等に振り分けます"
+                title="現在設定されている点数をスタッフ全員に均等に振り分けます"
               >
                 <span>⚖️ 全員に均等分配</span>
               </button>
@@ -1481,13 +1583,8 @@ export default function MainPage() {
             };
 
             const staffItemsMap = assign.items || {};
-
-            // このスタッフカードに表示する商品のリスト
-            // 全体で選択されている商品 ＋ すでにこのスタッフに設定されている商品をマージ
-            const itemIdsSet = new Set<string>();
-            overallCartItems.forEach((c) => itemIdsSet.add(c.id));
-            Object.keys(staffItemsMap).forEach((id) => itemIdsSet.add(id));
-            const relevantItemIds = Array.from(itemIdsSet);
+            // このスタッフカードに表示する商品: 伝票に追加されている全商品を展開
+            const relevantItemIds = targetItemIds;
 
             return (
               <div
@@ -1541,11 +1638,11 @@ export default function MainPage() {
                   )}
                 </div>
 
-                {/* カード中段: 選択した商品・使用パーツの担当個数（3枚目の画像と同じレイアウト） */}
+                {/* カード中段: 選択した商品・使用パーツの担当個数（各個人で個数を入力） */}
                 <div className="space-y-2 flex-1 min-h-[70px]">
                   {relevantItemIds.length === 0 ? (
                     <div className="text-center py-4 bg-stone-900/40 rounded-xl border border-dashed border-stone-800 text-stone-500 text-xs">
-                      下の商品一覧からパーツ・修理メニューを選択してください
+                      下の商品一覧からパーツ・修理メニューを「＋伝票に追加」してください
                     </div>
                   ) : (
                     <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1 custom-scrollbar">
@@ -1633,16 +1730,20 @@ export default function MainPage() {
                                 {formatCurrency(itemSub)}
                               </span>
 
-                              {assignedQty > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleSetStaffItemQuantity(staffIdx, itemId, 0)}
-                                  className="text-stone-500 hover:text-rose-400 p-1 rounded hover:bg-stone-800 cursor-pointer"
-                                  title="担当から解除"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (assignedQty > 0) {
+                                    handleSetStaffItemQuantity(staffIdx, itemId, 0);
+                                  } else {
+                                    handleToggleProductSelection(itemId);
+                                  }
+                                }}
+                                className="text-stone-500 hover:text-rose-400 p-1 rounded hover:bg-stone-800 cursor-pointer transition-colors"
+                                title={assignedQty > 0 ? "このスタッフの担当を0にする" : "伝票から除外"}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           </div>
                         );
@@ -1677,29 +1778,17 @@ export default function MainPage() {
           })}
         </div>
 
-        {/* 全体商品の割り当て状況インジケータ */}
-        {overallCartItems.length > 0 && (
+        {/* 伝票選択商品と割り当て状況インジケータ */}
+        {targetItemIds.length > 0 && (
           <div className="flex items-center justify-between text-xs pt-1 px-1 flex-wrap gap-2 border-t border-stone-800/60">
             <span className="text-stone-400">
-              全体選択: <strong className="text-white">{totalItemsCount}点</strong> /
-              スタッフ割り当て合計: <strong className="text-indigo-300">{totalAssignedAllStaff}点</strong>
+              伝票選択商品: <strong className="text-white">{targetItemIds.length}品目</strong> /
+              作業点数合計: <strong className="text-indigo-300">{totalAssignedAllStaff}点</strong>
             </span>
-            {totalAssignedAllStaff === totalItemsCount ? (
-              <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px]">
-                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                全商品割り当て一致
-              </span>
-            ) : totalAssignedAllStaff < totalItemsCount ? (
-              <span className="text-amber-400 font-bold flex items-center gap-1 text-[11px]">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                未割り当て商品があります (残り {totalItemsCount - totalAssignedAllStaff}点)
-              </span>
-            ) : (
-              <span className="text-rose-400 font-bold flex items-center gap-1 text-[11px]">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                割り当て数が全体を超過しています
-              </span>
-            )}
+            <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px]">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              各スタッフの担当点数に自動連動中
+            </span>
           </div>
         )}
       </div>
@@ -1798,7 +1887,7 @@ export default function MainPage() {
                 使用パーツ・修理メニュー選択 ({displayedProducts.length}点)
               </h2>
               <span className="text-[11px] text-stone-400">
-                ※作業で使用した部品や工賃メニューを選択してください（個数ボタンで素早く入力可能）
+                ※作業で使用した部品や工賃メニューを伝票に追加してください（個数は上のスタッフ欄で入力します）
               </span>
             </div>
 

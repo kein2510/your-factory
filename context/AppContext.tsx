@@ -2260,7 +2260,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       : "";
 
     const primaryStaffName = isMultiStaff
-      ? multiStaffAssignment!.staffShares.map((sh) => sh.staffName).join(", ")
+      ? (multiStaffAssignment!.staffShares[0]?.staffName || "店員")
       : (currentUser ? currentUser.displayName : "店員");
 
     const primaryStaffId = isMultiStaff
@@ -2269,32 +2269,69 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     let notesText = discountNote || "";
     if (isMultiStaff) {
-      const multiNote = `【👥 複数人共同作業: ${multiStaffNames}${multiStaffAssignment?.workLocations ? ` / 修理箇所: ${multiStaffAssignment.workLocations}` : ""}】`;
+      const multiNote = `【👥 出張修理分担: ${multiStaffNames}${multiStaffAssignment?.workLocations ? ` / 修理箇所: ${multiStaffAssignment.workLocations}` : ""}】`;
       notesText = notesText ? `${notesText} ${multiNote}` : multiNote;
     }
 
-    const newSale: Sale = {
-      id: `sale-${Date.now().toString().slice(-6)}`,
-      shopId: finalShopId,
-      staffName: primaryStaffName,
-      staffUserId: primaryStaffId,
-      totalAmount: finalSaleAmount,
-      total_amount: finalSaleAmount,
-      subtotalAmount: subtotal,
-      discountAmount: validDiscount > 0 ? validDiscount : undefined,
-      discountReason: discountReason?.trim() || undefined,
-      staff_name: primaryStaffName,
-      notes: notesText || undefined,
-      items: saleItemsList,
-      created_at: new Date().toISOString(),
-      multiStaffAssignment: isMultiStaff ? multiStaffAssignment : undefined,
-      storeRemainingRate: storeRemainingPercent,
-      storeRemainingAmount: storeRemainingAmount,
-      staffIncentiveAmount: incentiveAmount,
-    };
+    let newSalesList: Sale[] = [];
 
-    setSales((prev) => [newSale, ...prev]);
-    syncSaleToCloud(newSale);
+    if (isMultiStaff && multiStaffAssignment!.staffShares.length > 1) {
+      // 複数人の場合: 各スタッフ個人の売上として正確に計上されるよう、各自の担当金額を持つ個別レコードを生成
+      const baseSaleId = `sale-${Date.now().toString().slice(-6)}`;
+      newSalesList = multiStaffAssignment!.staffShares.map((sh, idx) => {
+        const staffIncentive = Math.round(sh.allocatedAmount * (incentivePercent / 100));
+        const staffStoreRemain = sh.allocatedAmount - staffIncentive;
+
+        const staffNotes = discountNote
+          ? `【👥 出張修理分担】${sh.staffName} 担当分 (¥${sh.allocatedAmount.toLocaleString()}) / 全体 ¥${finalSaleAmount.toLocaleString()} / 参加: ${multiStaffNames} ${discountNote}`
+          : `【👥 出張修理分担】${sh.staffName} 担当分 (¥${sh.allocatedAmount.toLocaleString()}) / 全体 ¥${finalSaleAmount.toLocaleString()} / 参加: ${multiStaffNames}`;
+
+        return {
+          id: `${baseSaleId}-${idx + 1}`,
+          shopId: finalShopId,
+          staffName: sh.staffName,
+          staffUserId: sh.userId,
+          totalAmount: sh.allocatedAmount,
+          total_amount: sh.allocatedAmount,
+          subtotalAmount: sh.allocatedAmount,
+          discountAmount: undefined,
+          discountReason: discountReason?.trim() || undefined,
+          staff_name: sh.staffName,
+          notes: staffNotes,
+          items: saleItemsList,
+          created_at: new Date(Date.now() + idx).toISOString(),
+          multiStaffAssignment: multiStaffAssignment,
+          storeRemainingRate: storeRemainingPercent,
+          storeRemainingAmount: staffStoreRemain,
+          staffIncentiveAmount: staffIncentive,
+        };
+      });
+    } else {
+      // 単独スタッフまたは1名の場合
+      const newSale: Sale = {
+        id: `sale-${Date.now().toString().slice(-6)}`,
+        shopId: finalShopId,
+        staffName: primaryStaffName,
+        staffUserId: primaryStaffId,
+        totalAmount: finalSaleAmount,
+        total_amount: finalSaleAmount,
+        subtotalAmount: subtotal,
+        discountAmount: validDiscount > 0 ? validDiscount : undefined,
+        discountReason: discountReason?.trim() || undefined,
+        staff_name: primaryStaffName,
+        notes: notesText || undefined,
+        items: saleItemsList,
+        created_at: new Date().toISOString(),
+        multiStaffAssignment: isMultiStaff ? multiStaffAssignment : undefined,
+        storeRemainingRate: storeRemainingPercent,
+        storeRemainingAmount: storeRemainingAmount,
+        staffIncentiveAmount: incentiveAmount,
+      };
+      newSalesList = [newSale];
+    }
+
+    setSales((prev) => [...newSalesList, ...prev]);
+    newSalesList.forEach((s) => syncSaleToCloud(s));
 
     if (storeRemainingAmount > 0) {
       setVaultBalance((prev) => {
@@ -2303,9 +2340,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return next;
       });
 
+      const primarySaleId = newSalesList.map((s) => s.id).join(", ");
       const vaultDetail = validDiscount > 0
-        ? `売上伝票「${newSale.id}」(小計 ¥${subtotal.toLocaleString()} / 値引き -¥${validDiscount.toLocaleString()} / 実売上 ¥${finalSaleAmount.toLocaleString()}) より、スタッフ手渡し${incentivePercent}% (¥${incentiveAmount.toLocaleString()}) を除いた店舗手元純残り${storeRemainingPercent}% (¥${storeRemainingAmount.toLocaleString()}) を金庫に入金しました`
-        : `売上伝票「${newSale.id}」(売上総額 ¥${finalSaleAmount.toLocaleString()}) より、スタッフ手渡し${incentivePercent}% (¥${incentiveAmount.toLocaleString()}) を除いた店舗手元純残り${storeRemainingPercent}% (¥${storeRemainingAmount.toLocaleString()}) を金庫に入金しました`;
+        ? `売上伝票「${primarySaleId}」(小計 ¥${subtotal.toLocaleString()} / 値引き -¥${validDiscount.toLocaleString()} / 実売上 ¥${finalSaleAmount.toLocaleString()}) より、スタッフ手渡し${incentivePercent}% (¥${incentiveAmount.toLocaleString()}) を除いた店舗手元純残り${storeRemainingPercent}% (¥${storeRemainingAmount.toLocaleString()}) を金庫に入金しました`
+        : `売上伝票「${primarySaleId}」(売上総額 ¥${finalSaleAmount.toLocaleString()}) より、スタッフ手渡し${incentivePercent}% (¥${incentiveAmount.toLocaleString()}) を除いた店舗手元純残り${storeRemainingPercent}% (¥${storeRemainingAmount.toLocaleString()}) を金庫に入金しました`;
 
       logAction({
         category: "vault",
