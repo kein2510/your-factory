@@ -289,6 +289,8 @@ export default function ExecutivePage() {
   const [newShopIcon, setNewShopIcon] = useState("🏪");
   const [newShopThemeColor, setNewShopThemeColor] = useState("amber");
   const [newShopDesc, setNewShopDesc] = useState("");
+  const [newShopEnableMultiStaffWork, setNewShopEnableMultiStaffWork] = useState(false);
+  const [newShopWorkTypeLabel, setNewShopWorkTypeLabel] = useState("修理箇所");
 
   const [editingShopId, setEditingShopId] = useState<string | null>(null);
   const [editShopName, setEditShopName] = useState("");
@@ -932,12 +934,16 @@ export default function ExecutivePage() {
       icon: newShopIcon.trim() || "🏪",
       themeColor: newShopThemeColor,
       description: newShopDesc.trim(),
+      enableMultiStaffWork: newShopEnableMultiStaffWork,
+      workTypeLabel: newShopWorkTypeLabel.trim() || "修理箇所",
     });
     setNewShopName("");
     setNewShopShortName("");
     setNewShopIcon("🏪");
     setNewShopThemeColor("amber");
     setNewShopDesc("");
+    setNewShopEnableMultiStaffWork(false);
+    setNewShopWorkTypeLabel("修理箇所");
     setIsAddShopModalOpen(false);
     alert(`新店舗「${newShopName.trim()}」を追加しました！`);
   };
@@ -6404,9 +6410,20 @@ export default function ExecutivePage() {
                             </div>
                           </div>
 
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-stone-800 text-amber-300 border border-stone-700 shrink-0">
-                            料理 {shopProdCount} 品
-                          </span>
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-stone-800 text-amber-300 border border-stone-700">
+                              商品 {shopProdCount} 品
+                            </span>
+                            {shop.enableMultiStaffWork ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                                👥 分担: 有り ({shop.workTypeLabel || "修理箇所"})
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-stone-800/80 text-stone-400 border border-stone-700/60">
+                                分担: 無し
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {shop.description && (
@@ -6970,11 +6987,43 @@ export default function ExecutivePage() {
                     </label>
                     <input
                       type="text"
-                      placeholder="例: 夜営業のカクテル＆おつまみ"
+                      placeholder="例: 車両修理・出張整備・パーツ加工"
                       value={newShopDesc}
                       onChange={(e) => setNewShopDesc(e.target.value)}
                       className="w-full px-3 py-2 bg-stone-950 rounded-xl border border-stone-700 text-xs text-stone-300 focus:border-amber-500"
                     />
+                  </div>
+
+                  {/* 複数人作業・出張修理設定 */}
+                  <div className="p-3 rounded-xl bg-stone-950/80 border border-stone-800 space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={newShopEnableMultiStaffWork}
+                        onChange={(e) => setNewShopEnableMultiStaffWork(e.target.checked)}
+                        className="w-4 h-4 rounded text-amber-600 accent-amber-500 cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-amber-300">
+                        👥 複数人作業・出張修理入力（メカニック等）を利用する
+                      </span>
+                    </label>
+                    <p className="text-[10px] text-stone-400 pl-6 leading-relaxed">
+                      出張修理等で複数台・複数箇所を数人で作業し、合算金額を各自の担当箇所数に応じて売上按分できるようにします。
+                    </p>
+                    {newShopEnableMultiStaffWork && (
+                      <div className="pl-6 pt-1">
+                        <label className="block text-[10px] font-bold text-stone-300 mb-0.5">
+                          作業箇所の呼称 (例: 修理箇所, 作業台数):
+                        </label>
+                        <input
+                          type="text"
+                          value={newShopWorkTypeLabel}
+                          onChange={(e) => setNewShopWorkTypeLabel(e.target.value)}
+                          placeholder="修理箇所"
+                          className="w-full px-2.5 py-1 bg-stone-900 rounded-lg border border-stone-700 text-xs text-white focus:border-amber-500"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div className="pt-2 flex items-center justify-end gap-2 border-t border-stone-800">
